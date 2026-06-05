@@ -171,6 +171,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- AWS Cognito Authentication ---
+from streamlit_cognito_auth import CognitoAuthenticator
+
+# Cognito configuration
+COGNITO_POOL_ID = os.environ.get("COGNITO_POOL_ID", "eu-central-1_6gWLCx0L9")
+COGNITO_APP_CLIENT_ID = os.environ.get("COGNITO_APP_CLIENT_ID", "31piugl5insei2m4nf08jp4gm9")
+COGNITO_APP_CLIENT_SECRET = os.environ.get("COGNITO_APP_CLIENT_SECRET", "kv1qlpg7hqqbkk52s3mk1i0th2ts0s8iecgddagkr8q2pg9iinl")
+
+authenticator = CognitoAuthenticator(
+    pool_id=COGNITO_POOL_ID,
+    app_client_id=COGNITO_APP_CLIENT_ID,
+    app_client_secret=COGNITO_APP_CLIENT_SECRET,
+)
+
+# Show login form - blocks the rest of the app until authenticated
+is_logged_in = authenticator.login()
+if not is_logged_in:
+    st.stop()
+
+# User is authenticated - show logout button in sidebar
+def logout():
+    authenticator.logout()
+
 # Initialize session state
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
@@ -604,6 +627,11 @@ REGION_DISPLAY_MAP = {
 with st.sidebar:
     st.image("https://assets.cloudage.llc/logo.png", width=200)
     st.caption("Powered by Amazon Bedrock")
+
+    # Show logged-in user and logout
+    st.markdown("---")
+    st.markdown(f"👤 **{authenticator.get_username()}**")
+    st.button("Logout", on_click=logout, type="secondary")
 
     # Configuration section
     st.markdown("### Agent Configuration")
