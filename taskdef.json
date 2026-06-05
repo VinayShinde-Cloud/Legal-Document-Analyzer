@@ -1,0 +1,44 @@
+{
+  "family": "legal-doc-analyzer",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "legal-doc-analyzer",
+      "image": "<ACCOUNT_ID>.dkr.ecr.eu-central-1.amazonaws.com/legal-doc-analyzer:latest",
+      "portMappings": [
+        {
+          "containerPort": 8501,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        { "name": "AWS_REGION", "value": "eu-central-1" },
+        { "name": "BEDROCK_AGENT_ID", "value": "PO5MANKEJ7" },
+        { "name": "BEDROCK_AGENT_ALIAS_ID", "value": "JBCQI46K23" },
+        { "name": "CHUNK_MAX_SIZE", "value": "8000" },
+        { "name": "CHUNK_MIN_SIZE", "value": "500" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/legal-doc-analyzer",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

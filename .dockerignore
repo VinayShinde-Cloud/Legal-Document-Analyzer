@@ -1,0 +1,13 @@
+.kiro/
+.pytest_cache/
+.venv/
+__pycache__/
+tests/
+Documents/
+*.yaml
+code
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+amplify.yml

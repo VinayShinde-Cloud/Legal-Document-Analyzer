@@ -1,0 +1,117 @@
+# ============================================================
+# CloudAge Legal Document Analyzer — Deployment Guide
+# ============================================================
+
+# --- OPTION 1: Deploy Bedrock Agents (CloudFormation) ---
+
+aws cloudformation create-stack \
+  --stack-name AnalyzeDoc-bedrock-agents \
+  --template-body file://ML-LEGAL-Collab-CFT-Claude-Model.yaml \
+  --parameters \
+    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
+    ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
+  --capabilities CAPABILITY_IAM \
+  --region eu-central-1
+
+# Available model options for FoundationModelId parameter:
+#   eu.amazon.nova-pro-v1:0          (Amazon Nova Pro - recommended, good throughput)
+#   eu.amazon.nova-lite-v1:0         (Amazon Nova Lite - faster, lower cost)
+#   eu.anthropic.claude-haiku-4-5-20251001-v1:0  (Claude Haiku 4.5 - requires quota)
+
+# Wait for stack creation
+aws cloudformation wait stack-create-complete --stack-name AnalyzeDoc-bedrock-agents --region eu-central-1
+
+# Get Agent IDs from outputs
+aws cloudformation describe-stacks --stack-name AnalyzeDoc-bedrock-agents --query 'Stacks[0].Outputs' --region eu-central-1
+
+
+# --- OPTION 2: Docker Build & Run Locally ---
+
+docker build -t legal-doc-analyzer .
+docker run -p 8501:8501 \
+  -e AWS_REGION=eu-central-1 \
+  -e BEDROCK_AGENT_ID=PO5MANKEJ7 \
+  -e BEDROCK_AGENT_ALIAS_ID=JBCQI46K23 \
+  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
+  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
+  legal-doc-analyzer
+
+# Open: http://localhost:8501
+
+
+# --- OPTION 3: Push to CodeCommit + CI/CD Pipeline ---
+
+# 1. Create CodeCommit repository
+aws codecommit create-repository \
+  --repository-name legal-doc-analyzer \
+  --repository-description "CloudAge Legal Document Analysis Application" \
+  --region eu-central-1
+
+# 2. Initialize git and push
+git init
+git add .
+git commit -m "Initial commit: Legal Document Analyzer with chunking pipeline"
+
+# Set remote (HTTPS)
+git remote add origin https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/legal-doc-analyzer
+git push -u origin main
+
+# 3. Create ECR repository
+aws ecr create-repository \
+  --repository-name legal-doc-analyzer \
+  --image-scanning-configuration scanOnPush=true \
+  --region eu-central-1
+
+# 4. Create CodeBuild project (uses buildspec.yml)
+aws codebuild create-project \
+  --name legal-doc-analyzer-build \
+  --source type=CODECOMMIT,location=https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/legal-doc-analyzer \
+  --artifacts type=NO_ARTIFACTS \
+  --environment type=LINUX_CONTAINER,computeType=BUILD_GENERAL1_SMALL,image=aws/codebuild/standard:7.0,privilegedMode=true \
+  --service-role arn:aws:iam::015337708931:role/codebuild-service-role \
+  --region eu-central-1
+
+# 5. Create CodePipeline (CodeCommit → CodeBuild → ECS Deploy)
+# See AWS Console: CodePipeline → Create pipeline
+
+
+# --- OPTION 4: AWS Amplify Hosting (Simplest) ---
+
+# 1. Push code to CodeCommit (see Option 3, steps 1-2)
+
+# 2. Create Amplify app connected to CodeCommit
+aws amplify create-app \
+  --name legal-doc-analyzer \
+  --repository https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/legal-doc-analyzer \
+  --platform WEB_COMPUTE \
+  --region eu-central-1
+
+# 3. Create branch
+aws amplify create-branch \
+  --app-id <APP_ID_FROM_ABOVE> \
+  --branch-name main \
+  --region eu-central-1
+
+# 4. Start deployment
+aws amplify start-job \
+  --app-id <APP_ID_FROM_ABOVE> \
+  --branch-name main \
+  --job-type RELEASE \
+  --region eu-central-1
+
+# Note: Amplify uses amplify.yml for build config
+# The app will be available at: https://main.<APP_ID>.amplifyapp.com
+
+
+# --- OPTION 5: Run Locally (Development) ---
+
+pip install -r requirements.txt
+export AWS_REGION=eu-central-1
+export BEDROCK_AGENT_ID=PO5MANKEJ7
+export BEDROCK_AGENT_ALIAS_ID=JBCQI46K23
+streamlit run Analyze-LegalDocumentsUI.py
+
+# UI Config:
+# - AWS_REGION: eu-central-1 (Frankfurt)
+# - AGENT_ID: PO5MANKEJ7 (from CloudFormation outputs)
+# - AGENT_ALIAS_ID: JBCQI46K23 (from CloudFormation outputs)
