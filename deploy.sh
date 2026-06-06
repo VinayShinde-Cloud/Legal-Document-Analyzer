@@ -1,13 +1,13 @@
 #!/bin/bash
 # ============================================================
 # Deploy Legal Document Analyzer to AWS
-# Prerequisites: AWS CLI configured, Docker installed
+# Uses region from: aws configure get region
 # ============================================================
 
 set -e
 
-# Configuration
-AWS_REGION="eu-central-1"
+# Dynamic configuration from aws configure
+AWS_REGION=$(aws configure get region)
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_REPO="legal-doc-analyzer"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -43,15 +43,20 @@ echo ""
 echo "✅ Image pushed successfully: ${IMAGE_URI}:latest"
 echo ""
 echo "Next steps:"
-echo "  1. Create an ECS cluster (if not exists):"
-echo "     aws ecs create-cluster --cluster-name legal-doc-analyzer --region ${AWS_REGION}"
+echo "  1. Deploy Bedrock Agents:"
+echo "     aws cloudformation create-stack --stack-name AnalyzeDoc-bedrock-agents \\"
+echo "       --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \\"
+echo "       --parameters ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \\"
+echo "         ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \\"
+echo "       --capabilities CAPABILITY_IAM --region ${AWS_REGION}"
 echo ""
-echo "  2. Create the ECS service with the task definition:"
-echo "     aws ecs register-task-definition --cli-input-json file://taskdef.json --region ${AWS_REGION}"
-echo "     aws ecs create-service --cluster legal-doc-analyzer --service-name legal-doc-app \\"
-echo "       --task-definition legal-doc-analyzer --desired-count 1 --launch-type FARGATE \\"
-echo "       --network-configuration 'awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx],assignPublicIp=ENABLED}' \\"
-echo "       --region ${AWS_REGION}"
+echo "  2. Get Agent IDs from stack outputs:"
+echo "     aws cloudformation describe-stacks --stack-name AnalyzeDoc-bedrock-agents \\"
+echo "       --query 'Stacks[0].Outputs' --region ${AWS_REGION}"
 echo ""
-echo "  3. Or use AWS Amplify for managed hosting"
+echo "  3. Set environment variables and run:"
+echo "     export AWS_REGION=${AWS_REGION}"
+echo "     export BEDROCK_AGENT_ID=<from-outputs>"
+echo "     export BEDROCK_AGENT_ALIAS_ID=<from-outputs>"
+echo "     streamlit run Analyze-LegalDocumentsUI.py"
 echo ""

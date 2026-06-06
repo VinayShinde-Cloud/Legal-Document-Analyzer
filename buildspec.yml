@@ -4,7 +4,6 @@ env:
   variables:
     IMAGE_REPO_NAME: "legal-doc-analyzer"
     IMAGE_TAG: "latest"
-    AWS_DEFAULT_REGION: "eu-north-1"
 
 phases:
   pre_build:

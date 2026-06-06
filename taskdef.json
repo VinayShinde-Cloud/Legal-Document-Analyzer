@@ -4,12 +4,12 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::015337708931:role/ecsTaskExecutionRole-north",
-  "taskRoleArn": "arn:aws:iam::015337708931:role/ecsTaskRole-north",
+  "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
+  "taskRoleArn": "PLACEHOLDER_TASK_ROLE_ARN",
   "containerDefinitions": [
     {
       "name": "legal-doc-analyzer",
-      "image": "015337708931.dkr.ecr.eu-north-1.amazonaws.com/legal-doc-analyzer:latest",
+      "image": "PLACEHOLDER_IMAGE_URI",
       "portMappings": [
         {
           "containerPort": 8501,
@@ -18,20 +18,20 @@
       ],
       "essential": true,
       "environment": [
-        { "name": "AWS_REGION", "value": "eu-north-1" },
-        { "name": "BEDROCK_AGENT_ID", "value": "674AROCWQL" },
-        { "name": "BEDROCK_AGENT_ALIAS_ID", "value": "FGBKQ7SJ4I" },
+        { "name": "AWS_REGION", "value": "PLACEHOLDER_REGION" },
+        { "name": "BEDROCK_AGENT_ID", "value": "PLACEHOLDER_AGENT_ID" },
+        { "name": "BEDROCK_AGENT_ALIAS_ID", "value": "PLACEHOLDER_AGENT_ALIAS_ID" },
         { "name": "CHUNK_MAX_SIZE", "value": "8000" },
         { "name": "CHUNK_MIN_SIZE", "value": "500" },
-        { "name": "COGNITO_POOL_ID", "value": "eu-north-1_UpKKPYBeb" },
-        { "name": "COGNITO_APP_CLIENT_ID", "value": "23hvvanb4ogkhjdoguqj5ctdjt" },
-        { "name": "COGNITO_APP_CLIENT_SECRET", "value": "hf4saqfotu81foc5re2l4v9ckfgd453tmgc2lpbk06atl4bj0ql" }
+        { "name": "COGNITO_POOL_ID", "value": "PLACEHOLDER_COGNITO_POOL_ID" },
+        { "name": "COGNITO_APP_CLIENT_ID", "value": "PLACEHOLDER_COGNITO_CLIENT_ID" },
+        { "name": "COGNITO_APP_CLIENT_SECRET", "value": "PLACEHOLDER_COGNITO_CLIENT_SECRET" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/legal-doc-analyzer",
-          "awslogs-region": "eu-north-1",
+          "awslogs-region": "PLACEHOLDER_REGION",
           "awslogs-stream-prefix": "ecs"
         }
       },

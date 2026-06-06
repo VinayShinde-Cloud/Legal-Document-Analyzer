@@ -174,10 +174,10 @@ st.markdown("""
 # --- AWS Cognito Authentication ---
 from streamlit_cognito_auth import CognitoAuthenticator
 
-# Cognito configuration (eu-north-1)
-COGNITO_POOL_ID = os.environ.get("COGNITO_POOL_ID", "eu-north-1_UpKKPYBeb")
-COGNITO_APP_CLIENT_ID = os.environ.get("COGNITO_APP_CLIENT_ID", "23hvvanb4ogkhjdoguqj5ctdjt")
-COGNITO_APP_CLIENT_SECRET = os.environ.get("COGNITO_APP_CLIENT_SECRET", "hf4saqfotu81foc5re2l4v9ckfgd453tmgc2lpbk06atl4bj0ql")
+# Cognito configuration (same region as deployment)
+COGNITO_POOL_ID = os.environ.get("COGNITO_POOL_ID", "")
+COGNITO_APP_CLIENT_ID = os.environ.get("COGNITO_APP_CLIENT_ID", "")
+COGNITO_APP_CLIENT_SECRET = os.environ.get("COGNITO_APP_CLIENT_SECRET", "")
 
 authenticator = CognitoAuthenticator(
     pool_id=COGNITO_POOL_ID,
@@ -214,9 +214,9 @@ if 'processing_result' not in st.session_state:
 if 'aws_region' not in st.session_state:
     st.session_state.aws_region = os.environ.get("AWS_REGION", "eu-north-1")
 if 'agent_id' not in st.session_state:
-    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "674AROCWQL")
+    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "")
 if 'agent_alias_id' not in st.session_state:
-    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "FGBKQ7SJ4I")
+    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "")
 if 'config_saved' not in st.session_state:
     st.session_state.config_saved = False
 
