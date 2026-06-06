@@ -4,8 +4,8 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::015337708931:role/ecsTaskExecutionRole-legal-doc",
-  "taskRoleArn": "arn:aws:iam::015337708931:role/ecsTaskRole-legal-doc",
+  "executionRoleArn": "arn:aws:iam::015337708931:role/ecsTaskExecutionRole-north",
+  "taskRoleArn": "arn:aws:iam::015337708931:role/ecsTaskRole-north",
   "containerDefinitions": [
     {
       "name": "legal-doc-analyzer",
