@@ -23,9 +23,9 @@
         { "name": "BEDROCK_AGENT_ALIAS_ID", "value": "FGBKQ7SJ4I" },
         { "name": "CHUNK_MAX_SIZE", "value": "8000" },
         { "name": "CHUNK_MIN_SIZE", "value": "500" },
-        { "name": "COGNITO_POOL_ID", "value": "eu-north-1_6gWLCx0L9" },
-        { "name": "COGNITO_APP_CLIENT_ID", "value": "31piugl5insei2m4nf08jp4gm9" },
-        { "name": "COGNITO_APP_CLIENT_SECRET", "value": "kv1qlpg7hqqbkk52s3mk1i0th2ts0s8iecgddagkr8q2pg9iinl" }
+        { "name": "COGNITO_POOL_ID", "value": "eu-north-1_UpKKPYBeb" },
+        { "name": "COGNITO_APP_CLIENT_ID", "value": "23hvvanb4ogkhjdoguqj5ctdjt" },
+        { "name": "COGNITO_APP_CLIENT_SECRET", "value": "hf4saqfotu81foc5re2l4v9ckfgd453tmgc2lpbk06atl4bj0ql" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
