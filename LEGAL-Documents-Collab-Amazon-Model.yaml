@@ -4,7 +4,7 @@ Description: Legal Document Analysis Multi-Agent Solution using Amazon Bedrock (
 Parameters:
   EnvironmentName:
     Type: String
-    Default: LegalBlogSetup
+    Default: LegalDocSetup
     Description: Environment name for resource naming and tagging
   FoundationModelId:
     Type: String

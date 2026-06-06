@@ -9,7 +9,7 @@
         "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": [
-        "arn:aws:bedrock:eu-central-1:*:inference-profile/eu.amazon.nova-pro-v1:0"
+        "arn:aws:bedrock:eu-north-1:*:inference-profile/eu.amazon.nova-pro-v1:0"
       ]
     },
     {
@@ -21,7 +21,7 @@
       ],
       "Resource": [
         "arn:aws:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0",
-        "arn:aws:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0",
+        "arn:aws:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0",
         "arn:aws:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0",
         "arn:aws:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0",
         "arn:aws:bedrock:eu-south-1::foundation-model/amazon.nova-pro-v1:0",
@@ -29,7 +29,7 @@
       ],
       "Condition": {
         "StringLike": {
-          "bedrock:InferenceProfileArn": "arn:aws:bedrock:eu-central-1:*:inference-profile/eu.amazon.nova-pro-v1:0"
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:eu-north-1:*:inference-profile/eu.amazon.nova-pro-v1:0"
         }
       }
     }

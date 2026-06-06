@@ -24,10 +24,16 @@ htmlcov/
 # Environment
 .env
 .env.local
+.env.*
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated files
+taskdef-resolved.json
+imagedefinitions.json
+*.log
 
 # Kiro
 .kiro/

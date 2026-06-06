@@ -5,9 +5,15 @@ __pycache__/
 tests/
 Documents/
 *.yaml
+*.json
 code
 .git/
 .gitignore
 .dockerignore
 Dockerfile
 amplify.yml
+deploy.sh
+README.md
+.env*
+bedrock-*.json
+marketplace-permissions.json

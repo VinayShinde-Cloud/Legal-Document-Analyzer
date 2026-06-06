@@ -4,16 +4,6 @@ AI-powered legal document analysis using Amazon Bedrock's multi-agent collaborat
 
 ![CloudAge](https://assets.cloudage.llc/logo.png)
 
-
-aws cloudformation create-stack \
-  --stack-name AnalyzeDoc-batch-pipeline \
-  --template-body file://LEGAL-Documents-BatchPipeline.yaml \
-  --parameters \
-    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=AgentId,ParameterValue=$BEDROCK_AGENT_ID \
-    ParameterKey=AgentAliasId,ParameterValue=$BEDROCK_AGENT_ALIAS_ID \
-  --capabilities CAPABILITY_IAM
-
 ---
 
 ## Features
@@ -276,18 +266,18 @@ aws cloudformation delete-stack --stack-name legal-doc-agents
 
 ```bash
 # Clone the repository
-git clone https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/legal-doc-analyzer
+git clone https://git-codecommit.<REGION>.amazonaws.com/v1/repos/legal-doc-analyzer
 cd legal-doc-analyzer
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Set environment variables
-export AWS_REGION=eu-central-1
-export BEDROCK_AGENT_ID=PO5MANKEJ7
-export BEDROCK_AGENT_ALIAS_ID=JBCQI46K23
-export COGNITO_POOL_ID=eu-central-1_6gWLCx0L9
-export COGNITO_APP_CLIENT_ID=31piugl5insei2m4nf08jp4gm9
+export AWS_REGION=$(aws configure get region)
+export BEDROCK_AGENT_ID=<AGENT_ID>
+export BEDROCK_AGENT_ALIAS_ID=<AGENT_ALIAS_ID>
+export COGNITO_POOL_ID=<COGNITO_POOL_ID>
+export COGNITO_APP_CLIENT_ID=<COGNITO_CLIENT_ID>
 export COGNITO_APP_CLIENT_SECRET=<your-secret>
 
 # Run the app
@@ -300,8 +290,8 @@ streamlit run Analyze-LegalDocumentsUI.py
 docker build -t legal-doc-analyzer .
 docker run -p 8501:8501 \
   -e AWS_REGION=eu-central-1 \
-  -e BEDROCK_AGENT_ID=PO5MANKEJ7 \
-  -e BEDROCK_AGENT_ALIAS_ID=JBCQI46K23 \
+  -e BEDROCK_AGENT_ID=<AGENT_ID> \
+  -e BEDROCK_AGENT_ALIAS_ID=<AGENT_ALIAS_ID> \
   -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
   -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
   legal-doc-analyzer
@@ -383,7 +373,7 @@ aws cloudformation update-stack \
     ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
     ParameterKey=KnowledgeBaseEnabled,ParameterValue=true \
   --capabilities CAPABILITY_IAM \
-  --region eu-central-1
+  --region $(aws configure get region)
 ```
 
 Then upload reference documents (legal precedents, company policies, contract templates) to the created S3 bucket:
@@ -475,7 +465,7 @@ aws cloudformation update-stack \
   --parameters ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
     ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
   --capabilities CAPABILITY_IAM \
-  --region eu-central-1
+  --region $(aws configure get region)
 ```
 
 ### Tuning Processing Times
@@ -553,26 +543,26 @@ aws cloudformation create-stack \
   --template-body file://LEGAL-Documents-BatchPipeline.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=AgentId,ParameterValue=PO5MANKEJ7 \
-    ParameterKey=AgentAliasId,ParameterValue=JBCQI46K23 \
+    ParameterKey=AgentId,ParameterValue=<AGENT_ID> \
+    ParameterKey=AgentAliasId,ParameterValue=<AGENT_ALIAS_ID> \
   --capabilities CAPABILITY_IAM \
-  --region eu-central-1
+  --region $(aws configure get region)
 ```
 
 ### Usage
 
 ```bash
 # Upload a single document
-aws s3 cp contract.pdf s3://LegalDocSetup-doc-input-015337708931-eu-central-1/upload/
+aws s3 cp contract.pdf s3://LegalDocSetup-doc-input-<ACCOUNT_ID>-<REGION>/upload/
 
 # Upload an entire folder of documents
-aws s3 cp ./legal-docs/ s3://LegalDocSetup-doc-input-015337708931-eu-central-1/upload/ --recursive
+aws s3 cp ./legal-docs/ s3://LegalDocSetup-doc-input-<ACCOUNT_ID>-<REGION>/upload/ --recursive
 
 # Check processing status
-aws dynamodb scan --table-name LegalDocSetup-doc-results --region eu-central-1
+aws dynamodb scan --table-name LegalDocSetup-doc-results --region $(aws configure get region)
 
 # Get results for a specific document
-aws s3 ls s3://LegalDocSetup-doc-output-015337708931-eu-central-1/results/ --recursive
+aws s3 ls s3://LegalDocSetup-doc-output-<ACCOUNT_ID>-<REGION>/results/ --recursive
 ```
 
 ### How It Works

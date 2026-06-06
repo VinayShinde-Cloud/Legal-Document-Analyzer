@@ -66,7 +66,7 @@ Resources:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}-app"
+      RepositoryName: "legal-doc-analyzer"
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -201,13 +201,13 @@ Resources:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
     Properties:
-      LogGroupName: !Sub "/ecs/${EnvironmentName}"
+      LogGroupName: "/ecs/legal-doc-analyzer"
       RetentionInDays: 14
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: !Sub "${EnvironmentName}-task"
+      Family: "legal-doc-analyzer"
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
@@ -311,7 +311,7 @@ Resources:
   CodeCommitRepo:
     Type: AWS::CodeCommit::Repository
     Properties:
-      RepositoryName: !Sub "${EnvironmentName}-repo"
+      RepositoryName: "legal-doc-analyzer"
       RepositoryDescription: CloudAge Legal Document Analyzer source code
 
   CodeBuildProject:
