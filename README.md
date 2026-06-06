@@ -4,6 +4,16 @@ AI-powered legal document analysis using Amazon Bedrock's multi-agent collaborat
 
 ![CloudAge](https://assets.cloudage.llc/logo.png)
 
+
+aws cloudformation create-stack \
+  --stack-name AnalyzeDoc-batch-pipeline \
+  --template-body file://LEGAL-Documents-BatchPipeline.yaml \
+  --parameters \
+    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
+    ParameterKey=AgentId,ParameterValue=$BEDROCK_AGENT_ID \
+    ParameterKey=AgentAliasId,ParameterValue=$BEDROCK_AGENT_ALIAS_ID \
+  --capabilities CAPABILITY_IAM
+
 ---
 
 ## Features
@@ -270,6 +280,7 @@ git add . && git commit -m "Update" && git push origin main
 │   ├── test_synthesis_engine.py
 │   └── test_document_processor.py
 ├── LEGAL-Documents-Collab-Amazon-Model.yaml  # CloudFormation (Bedrock agents)
+├── LEGAL-Documents-Infrastructure.yaml      # CloudFormation (ECS, ALB, ECR, Cognito, CodeBuild)
 ├── LEGAL-Documents-BatchPipeline.yaml       # CloudFormation (S3 + Step Functions batch)
 ├── Dockerfile                       # Container build
 ├── buildspec.yml                    # CodeBuild CI/CD
