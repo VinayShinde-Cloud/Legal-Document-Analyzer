@@ -6,7 +6,7 @@
 
 aws cloudformation create-stack \
   --stack-name AnalyzeDoc-bedrock-agents \
-  --template-body file://ML-LEGAL-Collab-CFT-Claude-Model.yaml \
+  --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
     ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \

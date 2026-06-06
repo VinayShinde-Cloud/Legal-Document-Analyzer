@@ -1,0 +1,573 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Legal Document Batch Processing Pipeline — S3 drop zone with Step Functions orchestration
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: LegalDocSetup
+    Description: Environment name (must match the agent stack)
+  AgentId:
+    Type: String
+    Description: Bedrock Collaborator Agent ID from the agent stack
+  AgentAliasId:
+    Type: String
+    Description: Bedrock Collaborator Agent Alias ID from the agent stack
+  MaxConcurrency:
+    Type: Number
+    Default: 5
+    Description: Maximum documents processed in parallel
+
+Resources:
+  # ============================================================
+  # S3 BUCKETS — Input (drop zone) and Output (results)
+  # ============================================================
+  InputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-doc-input-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveToProcessedAfter30Days
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+
+  OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-doc-output-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ============================================================
+  # DYNAMODB — Results tracking and metadata
+  # ============================================================
+  ResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-doc-results"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: document_id
+          AttributeType: S
+        - AttributeName: upload_timestamp
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: document_id
+          KeyType: HASH
+        - AttributeName: upload_timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: upload_timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ============================================================
+  # IAM ROLES
+  # ============================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BatchPipelineAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt InputBucket.Arn
+                  - !Sub "${InputBucket.Arn}/*"
+                  - !GetAtt OutputBucket.Arn
+                  - !Sub "${OutputBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ResultsTable.Arn
+                  - !Sub "${ResultsTable.Arn}/index/*"
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - textract:DetectDocumentText
+                  - textract:AnalyzeDocument
+                Resource: "*"
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ExtractTextFunction.Arn
+                  - !GetAtt AnalyzeDocumentFunction.Arn
+                  - !GetAtt StoreResultsFunction.Arn
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !GetAtt DocumentProcessingStateMachine.Arn
+
+  # ============================================================
+  # LAMBDA FUNCTIONS
+  # ============================================================
+  ExtractTextFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-extract-text"
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          INPUT_BUCKET: !Ref InputBucket
+          RESULTS_TABLE: !Ref ResultsTable
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          import uuid
+          from datetime import datetime
+
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          textract = boto3.client('textract')
+          table = dynamodb.Table(os.environ['RESULTS_TABLE'])
+
+          def handler(event, context):
+              bucket = event['detail']['bucket']['name']
+              key = event['detail']['object']['key']
+              
+              # Skip non-document files
+              ext = key.rsplit('.', 1)[-1].lower() if '.' in key else ''
+              if ext not in ['pdf', 'docx', 'doc', 'txt']:
+                  return {'status': 'skipped', 'reason': f'Unsupported file type: {ext}'}
+              
+              document_id = str(uuid.uuid4())
+              timestamp = datetime.utcnow().isoformat()
+              
+              # Record in DynamoDB as processing
+              table.put_item(Item={
+                  'document_id': document_id,
+                  'upload_timestamp': timestamp,
+                  'status': 'PROCESSING',
+                  'filename': key.split('/')[-1],
+                  's3_key': key,
+                  's3_bucket': bucket,
+                  'file_type': ext,
+              })
+              
+              # Extract text based on file type
+              if ext == 'pdf':
+                  # Use Textract for PDFs
+                  response = textract.detect_document_text(
+                      Document={'S3Object': {'Bucket': bucket, 'Name': key}}
+                  )
+                  text = '\n'.join([
+                      block['Text'] for block in response['Blocks']
+                      if block['BlockType'] == 'LINE'
+                  ])
+              elif ext == 'txt':
+                  obj = s3.get_object(Bucket=bucket, Key=key)
+                  text = obj['Body'].read().decode('utf-8')
+              else:
+                  # For DOCX, read raw and do basic extraction
+                  obj = s3.get_object(Bucket=bucket, Key=key)
+                  text = f"[Document: {key}] - Content extraction for {ext} files requires additional processing."
+              
+              return {
+                  'document_id': document_id,
+                  'timestamp': timestamp,
+                  'filename': key.split('/')[-1],
+                  's3_bucket': bucket,
+                  's3_key': key,
+                  'text': text[:25000],  # Cap at 25K chars
+                  'text_length': len(text),
+                  'file_type': ext,
+              }
+
+  AnalyzeDocumentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-analyze-document"
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          AGENT_ID: !Ref AgentId
+          AGENT_ALIAS_ID: !Ref AgentAliasId
+          RESULTS_TABLE: !Ref ResultsTable
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          import uuid
+          import time
+
+          bedrock_agent = boto3.client('bedrock-agent-runtime')
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['RESULTS_TABLE'])
+
+          def handler(event, context):
+              document_id = event['document_id']
+              text = event['text']
+              filename = event['filename']
+              
+              agent_id = os.environ['AGENT_ID']
+              agent_alias_id = os.environ['AGENT_ALIAS_ID']
+              session_id = str(uuid.uuid4())
+              
+              # Update status
+              table.update_item(
+                  Key={'document_id': document_id, 'upload_timestamp': event['timestamp']},
+                  UpdateExpression='SET #s = :s',
+                  ExpressionAttributeNames={'#s': 'status'},
+                  ExpressionAttributeValues={':s': 'ANALYZING'}
+              )
+              
+              # Invoke Bedrock Agent with retry
+              prompt = f"Please analyze this {filename} document:\n\n{text}"
+              
+              max_retries = 3
+              for attempt in range(max_retries):
+                  try:
+                      response = bedrock_agent.invoke_agent(
+                          agentId=agent_id,
+                          agentAliasId=agent_alias_id,
+                          sessionId=session_id,
+                          inputText=prompt
+                      )
+                      
+                      full_response = ""
+                      if 'completion' in response:
+                          for event_chunk in response['completion']:
+                              if isinstance(event_chunk, dict) and 'chunk' in event_chunk:
+                                  if 'bytes' in event_chunk['chunk']:
+                                      full_response += event_chunk['chunk']['bytes'].decode('utf-8')
+                      
+                      return {
+                          'document_id': document_id,
+                          'timestamp': event['timestamp'],
+                          'filename': filename,
+                          'analysis': full_response,
+                          'status': 'COMPLETED',
+                          'text_length': event['text_length'],
+                      }
+                      
+                  except Exception as e:
+                      if 'throttling' in str(e).lower() and attempt < max_retries - 1:
+                          time.sleep((2 ** attempt) * 10)
+                          continue
+                      
+                      return {
+                          'document_id': document_id,
+                          'timestamp': event['timestamp'],
+                          'filename': filename,
+                          'analysis': None,
+                          'status': 'FAILED',
+                          'error': str(e),
+                          'text_length': event.get('text_length', 0),
+                      }
+
+  StoreResultsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-store-results"
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref OutputBucket
+          RESULTS_TABLE: !Ref ResultsTable
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          from datetime import datetime
+
+          s3 = boto3.client('s3')
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['RESULTS_TABLE'])
+          output_bucket = os.environ['OUTPUT_BUCKET']
+
+          def handler(event, context):
+              document_id = event['document_id']
+              timestamp = event['timestamp']
+              filename = event['filename']
+              status = event['status']
+              analysis = event.get('analysis', '')
+              error = event.get('error', '')
+              
+              # Store analysis result in S3
+              if analysis:
+                  result_key = f"results/{datetime.utcnow().strftime('%Y/%m/%d')}/{document_id}/{filename}.json"
+                  s3.put_object(
+                      Bucket=output_bucket,
+                      Key=result_key,
+                      Body=json.dumps({
+                          'document_id': document_id,
+                          'filename': filename,
+                          'analysis': analysis,
+                          'processed_at': datetime.utcnow().isoformat(),
+                          'text_length': event.get('text_length', 0),
+                      }, indent=2),
+                      ContentType='application/json'
+                  )
+              else:
+                  result_key = None
+              
+              # Update DynamoDB
+              table.update_item(
+                  Key={'document_id': document_id, 'upload_timestamp': timestamp},
+                  UpdateExpression='SET #s = :s, completed_at = :c, result_key = :r, error_message = :e',
+                  ExpressionAttributeNames={'#s': 'status'},
+                  ExpressionAttributeValues={
+                      ':s': status,
+                      ':c': datetime.utcnow().isoformat(),
+                      ':r': result_key,
+                      ':e': error,
+                  }
+              )
+              
+              return {
+                  'document_id': document_id,
+                  'status': status,
+                  'result_key': result_key,
+              }
+
+  # ============================================================
+  # STEP FUNCTIONS — Document processing workflow
+  # ============================================================
+  DocumentProcessingStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${EnvironmentName}-doc-processing"
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Legal Document Batch Processing Pipeline",
+          "StartAt": "ExtractText",
+          "States": {
+            "ExtractText": {
+              "Type": "Task",
+              "Resource": "${ExtractTextFunction.Arn}",
+              "ResultPath": "$",
+              "Next": "CheckSkipped",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 5,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "MarkFailed"
+                }
+              ]
+            },
+            "CheckSkipped": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.status",
+                  "StringEquals": "skipped",
+                  "Next": "SkippedEnd"
+                }
+              ],
+              "Default": "AnalyzeDocument"
+            },
+            "AnalyzeDocument": {
+              "Type": "Task",
+              "Resource": "${AnalyzeDocumentFunction.Arn}",
+              "ResultPath": "$",
+              "Next": "StoreResults",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 10,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "MarkFailed"
+                }
+              ]
+            },
+            "StoreResults": {
+              "Type": "Task",
+              "Resource": "${StoreResultsFunction.Arn}",
+              "ResultPath": "$",
+              "End": true,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "MarkFailed"
+                }
+              ]
+            },
+            "MarkFailed": {
+              "Type": "Pass",
+              "Result": "FAILED",
+              "ResultPath": "$.final_status",
+              "End": true
+            },
+            "SkippedEnd": {
+              "Type": "Succeed"
+            }
+          }
+        }
+
+  # ============================================================
+  # EVENTBRIDGE — Trigger pipeline on S3 upload
+  # ============================================================
+  S3UploadRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${EnvironmentName}-doc-upload-trigger"
+      Description: "Trigger document processing when files are uploaded to input bucket"
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - "Object Created"
+        detail:
+          bucket:
+            name:
+              - !Ref InputBucket
+          object:
+            key:
+              - prefix: "upload/"
+      Targets:
+        - Id: StartProcessing
+          Arn: !GetAtt DocumentProcessingStateMachine.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+Outputs:
+  InputBucketName:
+    Description: S3 bucket to drop documents for processing
+    Value: !Ref InputBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-InputBucket"
+
+  OutputBucketName:
+    Description: S3 bucket where analysis results are stored
+    Value: !Ref OutputBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-OutputBucket"
+
+  ResultsTableName:
+    Description: DynamoDB table tracking all processing results
+    Value: !Ref ResultsTable
+    Export:
+      Name: !Sub "${EnvironmentName}-ResultsTable"
+
+  StateMachineArn:
+    Description: Step Functions state machine ARN
+    Value: !GetAtt DocumentProcessingStateMachine.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-StateMachineArn"
+
+  UploadPath:
+    Description: Drop files here to trigger processing
+    Value: !Sub "s3://${InputBucket}/upload/"

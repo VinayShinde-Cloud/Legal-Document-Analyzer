@@ -212,11 +212,11 @@ if 'processing_result' not in st.session_state:
 
 # Default AWS region and agent configuration (read from environment variables if available)
 if 'aws_region' not in st.session_state:
-    st.session_state.aws_region = os.environ.get("AWS_REGION", "eu-central-1")
+    st.session_state.aws_region = os.environ.get("AWS_REGION", "eu-north-1")
 if 'agent_id' not in st.session_state:
-    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "")
+    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "674AROCWQL")
 if 'agent_alias_id' not in st.session_state:
-    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "")
+    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "FGBKQ7SJ4I")
 if 'config_saved' not in st.session_state:
     st.session_state.config_saved = False
 
@@ -615,6 +615,7 @@ def reset_session():
 
 # Region display mapping
 REGION_DISPLAY_MAP = {
+    "eu-north-1": "Stockholm",
     "eu-central-1": "Frankfurt",
     "eu-west-1": "Ireland",
     "eu-west-2": "London",
@@ -642,6 +643,7 @@ with st.sidebar:
 
         # AWS Region selection
         region_options = [
+            "EU (Stockholm)",
             "EU (Frankfurt)",
             "EU (Ireland)",
             "EU (London)",
@@ -651,6 +653,7 @@ with st.sidebar:
         ]
 
         region_mapping = {
+            "EU (Stockholm)": "eu-north-1",
             "EU (Frankfurt)": "eu-central-1",
             "EU (Ireland)": "eu-west-1",
             "EU (London)": "eu-west-2",

@@ -213,6 +213,13 @@ The implementation plan breaks down into 10 groups with 28 sub-tasks following t
 \pard\tx720\pardeftab720\sa120\partightenfactor0
 \cf2 \
 \
+To add HTTPS later (when you have a domain):\
+\
+Create an ACM certificate for your domain (e.g., app.cloudage.llc)\
+Point your domain's CNAME to legal-doc-alb-552949067.eu-central-1.elb.amazonaws.com\
+Add an HTTPS listener: aws elbv2 create-listener --load-balancer-arn <ALB_ARN> --protocol HTTPS --port 443 --certificates CertificateArn=<ACM_CERT_ARN> --default-actions Type=forward,TargetGroupArn=<TG_ARN>\
+Redirect HTTP\uc0\u8594 HTTPS on the port 80 listener\
+\
 \
 \
 \

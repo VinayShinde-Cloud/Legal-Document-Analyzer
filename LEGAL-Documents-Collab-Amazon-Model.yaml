@@ -1,0 +1,769 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Legal Document Analysis Multi-Agent Solution using Amazon Bedrock (EU deployment)
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: LegalBlogSetup
+    Description: Environment name for resource naming and tagging
+  FoundationModelId:
+    Type: String
+    Default: "eu.amazon.nova-pro-v1:0"
+    AllowedValues:
+      - "eu.amazon.nova-pro-v1:0"
+      - "eu.amazon.nova-lite-v1:0"
+      - "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+    Description: Foundation model inference profile for all agents (EU cross-region)
+  KnowledgeBaseEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable Knowledge Base (requires S3 bucket with reference documents)
+
+Conditions:
+  CreateKnowledgeBase: !Equals [!Ref KnowledgeBaseEnabled, "true"]
+
+Resources:
+  # ============================================================
+  # GUARDRAIL — Controls agent behavior and content safety
+  # ============================================================
+  LegalDocGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: !Sub "${EnvironmentName}-LegalDocGuardrail"
+      Description: "Guardrail for legal document analysis agents - blocks harmful content, enforces topic boundaries, and manages PII handling"
+      BlockedInputMessaging: "I cannot process this request. Please provide a valid legal document, contract, email, or professional communication for analysis."
+      BlockedOutputsMessaging: "I cannot provide this response as it may contain inappropriate content. Please rephrase your query about the document."
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: SEXUAL
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: VIOLENCE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: HATE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: INSULTS
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: MISCONDUCT
+            InputStrength: HIGH
+            OutputStrength: HIGH
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: "LegalAdvice"
+            Definition: "Providing specific legal advice, legal opinions, or recommendations that could be construed as practicing law without a license"
+            Examples:
+              - "You should sue them for breach of contract"
+              - "Based on this document, you will win your case"
+              - "I advise you to terminate the agreement immediately"
+            Type: DENY
+          - Name: "OffTopic"
+            Definition: "Questions unrelated to document analysis, legal document processing, or professional communication analysis"
+            Examples:
+              - "Write me a poem about cats"
+              - "What is the weather today"
+              - "Help me write code for a website"
+            Type: DENY
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: US_SOCIAL_SECURITY_NUMBER
+            Action: ANONYMIZE
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: ANONYMIZE
+          - Type: PIN
+            Action: ANONYMIZE
+          - Type: PASSWORD
+            Action: ANONYMIZE
+
+  LegalDocGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !Ref LegalDocGuardrail
+      Description: "Initial version"
+
+  # ============================================================
+  # KNOWLEDGE BASE — RAG for legal reference documents
+  # ============================================================
+  KnowledgeBaseBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateKnowledgeBase
+    Properties:
+      BucketName: !Sub "retrieval-augmented-generation-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Condition: CreateKnowledgeBase
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: KnowledgeBaseAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt KnowledgeBaseBucket.Arn
+                  - !Sub "${KnowledgeBaseBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: "*"
+
+  # ============================================================
+  # IAM POLICIES
+  # ============================================================
+  # Managed Policy for individual Bedrock Agents
+  BedrockAgentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Policy for Bedrock Agents to invoke foundation models via EU cross-region inference"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AmazonBedrockAgentInferenceProfilesCrossRegionPolicyProd
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:GetInferenceProfile
+              - bedrock:GetFoundationModel
+            Resource:
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${FoundationModelId}"
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:application-inference-profile/*"
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*"
+          - Sid: AmazonBedrockAgentCrossRegionModelInvocation
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-2::foundation-model/amazon.nova-pro-v1:0"
+            Condition:
+              StringLike:
+                "bedrock:InferenceProfileArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:*:inference-profile/${FoundationModelId}"
+          - Sid: GuardrailAccess
+            Effect: Allow
+            Action:
+              - bedrock:ApplyGuardrail
+            Resource:
+              - !GetAtt LegalDocGuardrail.GuardrailArn
+
+  # Bedrock Agent Execution Role
+  BedrockAgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref BedrockAgentPolicy
+
+  # Classification Agent and Alias
+  ClassificationAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${EnvironmentName}-Classification-Agent"
+      Description: Agent for Document Classification & PII-Detection
+      AutoPrepare: true
+      GuardrailConfiguration:
+        GuardrailIdentifier: !Ref LegalDocGuardrail
+        GuardrailVersion: !GetAtt LegalDocGuardrailVersion.Version
+      Instruction: |
+        You are a document classification and PII detection specialist. Your task is to analyze the provided document and produce a structured assessment.
+
+        ## Classification Task
+        Classify the document into EXACTLY ONE of these categories:
+        - **Contract**: Agreements, terms of service, NDAs, SLAs, purchase orders
+        - **Email**: Email communications, correspondence, threads
+        - **Legal**: Court filings, briefs, motions, legal opinions, regulations, statutes
+
+        ## PII Detection Task
+        Scan the entire document for the following PII types:
+        - Social Security Numbers (patterns: XXX-XX-XXXX, XXXXXXXXX)
+        - Email addresses (patterns: user@domain.com)
+        - Phone numbers (patterns: (XXX) XXX-XXXX, XXX-XXX-XXXX, +X-XXX-XXX-XXXX)
+        - Physical addresses (street address, city, state, zip)
+
+        ## Output Format
+        You MUST respond in this exact JSON format with no additional text:
+        {{
+            "classification": {{
+                "category": "Contract|Email|Legal",
+                "confidence_score": <integer 0-100>,
+                "reasoning": "<one sentence explanation>"
+            }},
+            "pii_detection": {{
+                "found_pii": {{
+                    "ssn": ["<detected values>"],
+                    "emails": ["<detected values>"],
+                    "phones": ["<detected values>"],
+                    "addresses": ["<detected values>"]
+                }},
+                "risk_level": "HIGH|MEDIUM|LOW",
+                "total_pii_count": <integer>
+            }}
+        }}
+
+        ## Rules
+        - HIGH risk = any SSN or 5+ total PII items found
+        - MEDIUM risk = 1-4 PII items found (no SSN)
+        - LOW risk = no PII found
+        - If unsure about classification, choose the closest match with a lower confidence score
+        - Never fabricate PII that doesn't exist in the document
+      AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
+      IdleSessionTTLInSeconds: 1800
+      FoundationModel: !Ref FoundationModelId
+
+  ClassificationAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentAliasName: !Sub "${EnvironmentName}-ClassificationAgent"
+      AgentId: !Ref ClassificationAgent
+
+  # Contract Agent and Alias
+  ContractAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${EnvironmentName}-Contract-Analysis-Agent"
+      Description: Agent for analyzing contracts
+      AutoPrepare: true
+      GuardrailConfiguration:
+        GuardrailIdentifier: !Ref LegalDocGuardrail
+        GuardrailVersion: !GetAtt LegalDocGuardrailVersion.Version
+      Instruction: |
+        You are a contract analysis specialist. Your task is to extract key elements from contracts, agreements, and terms of service.
+
+        ## Analysis Areas
+        1. **Parties**: Identify all named parties, their roles (e.g., "Provider", "Client"), and any defined short names
+        2. **Key Dates**: Start date, end date, renewal dates, notice deadlines, and any other significant dates
+        3. **Financial Terms**: All monetary amounts, payment schedules, currencies, penalties, and fee structures
+        4. **Obligations**: What each party must do, organized by party
+        5. **Termination Clauses**: How the contract can be ended, notice periods, early termination fees, and conditions
+
+        ## Output Format
+        You MUST respond in this exact JSON format:
+        {{
+            "parties": [
+                {{"name": "<party name>", "role": "<role in agreement>", "short_name": "<defined alias if any>"}}
+            ],
+            "key_dates": {{
+                "effective_date": "<date or null>",
+                "end_date": "<date or null>",
+                "renewal_date": "<date or null>",
+                "other_dates": [{{"date": "<date>", "description": "<what happens>"}}]
+            }},
+            "financial_terms": {{
+                "total_value": "<amount or null>",
+                "currency": "<ISO code>",
+                "payment_schedule": "<description>",
+                "fees": [{{"type": "<fee type>", "amount": "<value>", "condition": "<when it applies>"}}]
+            }},
+            "obligations": {{
+                "<party_1_name>": ["<obligation 1>", "<obligation 2>"],
+                "<party_2_name>": ["<obligation 1>", "<obligation 2>"]
+            }},
+            "termination": {{
+                "conditions": ["<condition that allows termination>"],
+                "notice_period": "<e.g., 30 days>",
+                "early_termination_fee": "<amount or null>",
+                "survival_clauses": ["<clauses that survive termination>"]
+            }},
+            "risk_score": "<HIGH|MEDIUM|LOW>",
+            "risk_factors": ["<identified risks>"]
+        }}
+
+        ## Rules
+        - Extract only what is explicitly stated in the document
+        - Use null for fields where information is not present
+        - Dates should be in ISO format (YYYY-MM-DD) when possible
+        - Never provide legal advice or recommend actions
+        - HIGH risk = one-sided terms, unlimited liability, or missing protections
+        - MEDIUM risk = some imbalanced terms but standard protections exist
+        - LOW risk = balanced terms with standard protections
+      AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
+      IdleSessionTTLInSeconds: 1800
+      FoundationModel: !Ref FoundationModelId
+
+  ContractAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentAliasName: !Sub "${EnvironmentName}-ContractAnalysisAgent"
+      AgentId: !Ref ContractAgent
+
+  # Email Agent and Alias
+  EmailAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${EnvironmentName}-Email-Analysis-Agent"
+      Description: Agent for analyzing Email communications
+      AutoPrepare: true
+      GuardrailConfiguration:
+        GuardrailIdentifier: !Ref LegalDocGuardrail
+        GuardrailVersion: !GetAtt LegalDocGuardrailVersion.Version
+      Instruction: |
+        You are an email communication analysis specialist. Your task is to extract communication patterns, participants, and implications from email correspondence.
+
+        ## Analysis Areas
+        1. **Participants**: Identify sender, recipients (To, CC, BCC if visible), and any mentioned third parties
+        2. **Topics**: Main subjects discussed, organized by importance
+        3. **Action Items**: Specific tasks mentioned with assigned owners and deadlines
+        4. **Sentiment**: Overall tone assessment with confidence score
+        5. **Legal Implications**: Any statements that could have legal significance (admissions, commitments, threats, notices)
+        6. **Timeline**: Key dates or deadlines mentioned in the email
+
+        ## Output Format
+        You MUST respond in this exact JSON format:
+        {{
+            "participants": {{
+                "sender": "<name and/or email>",
+                "to": ["<recipient 1>"],
+                "cc": ["<cc recipient>"],
+                "bcc": ["<bcc if visible>"],
+                "mentioned": ["<third parties referenced>"]
+            }},
+            "subject": "<email subject if available>",
+            "topics": [
+                {{"topic": "<description>", "importance": "HIGH|MEDIUM|LOW"}}
+            ],
+            "action_items": [
+                {{"task": "<what needs to be done>", "owner": "<who>", "deadline": "<when or null>"}}
+            ],
+            "sentiment": {{
+                "overall": "POSITIVE|NEUTRAL|NEGATIVE",
+                "score": <integer 0-100>,
+                "indicators": ["<phrases that indicate the tone>"]
+            }},
+            "legal_implications": [
+                {{"statement": "<the relevant text>", "implication_type": "<admission|commitment|threat|notice|other>", "severity": "HIGH|MEDIUM|LOW"}}
+            ],
+            "timeline": [
+                {{"date": "<date>", "event": "<what happens>"}}
+            ]
+        }}
+
+        ## Rules
+        - Extract only what is explicitly stated; do not infer unstated intentions
+        - Sentiment score: 0 = extremely negative, 50 = neutral, 100 = extremely positive
+        - Legal implications should only flag genuinely significant statements
+        - Never provide legal advice about what actions to take
+        - If information is not available for a field, use empty arrays or null
+      AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
+      IdleSessionTTLInSeconds: 1800
+      FoundationModel: !Ref FoundationModelId
+
+  EmailAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentAliasName: !Sub "${EnvironmentName}-EmailAnalysisAgent"
+      AgentId: !Ref EmailAgent
+
+  # Legal Agent and Alias
+  LegalAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${EnvironmentName}-Legal-Analysis-Agent"
+      Description: Agent for analyzing Legal Documents
+      AutoPrepare: true
+      GuardrailConfiguration:
+        GuardrailIdentifier: !Ref LegalDocGuardrail
+        GuardrailVersion: !GetAtt LegalDocGuardrailVersion.Version
+      Instruction: |
+        You are a legal document analysis specialist. Your task is to extract legal elements from court filings, briefs, motions, opinions, and regulatory documents.
+
+        ## Analysis Areas
+        1. **Legal Arguments**: Key arguments made, organized by strength
+        2. **Citations**: Case law, statutes, and regulations cited with full references
+        3. **Precedents**: Prior cases or rulings referenced and their relevance
+        4. **Risk Factors**: Issues that could create legal exposure, categorized by severity
+        5. **Privilege Indicators**: Whether the document is protected by attorney-client privilege or work product doctrine
+        6. **Procedural Information**: Filing dates, court names, case numbers, parties
+
+        ## Output Format
+        You MUST respond in this exact JSON format:
+        {{
+            "procedural_info": {{
+                "court": "<court name or null>",
+                "case_number": "<case number or null>",
+                "filing_date": "<date or null>",
+                "document_type": "<brief|motion|opinion|complaint|other>"
+            }},
+            "legal_arguments": [
+                {{"argument": "<summary>", "strength": "STRONG|MODERATE|WEAK", "supporting_evidence": "<brief reference>"}}
+            ],
+            "citations": [
+                {{"citation": "<full case/statute citation>", "relevance": "<why it matters>", "type": "case_law|statute|regulation"}}
+            ],
+            "precedents": [
+                {{"case": "<case name>", "holding": "<what was decided>", "applicability": "<how it applies here>"}}
+            ],
+            "risk_factors": {{
+                "high": [{{"risk": "<description>", "basis": "<why it's high risk>"}}],
+                "medium": [{{"risk": "<description>", "basis": "<reasoning>"}}],
+                "low": [{{"risk": "<description>", "basis": "<reasoning>"}}]
+            }},
+            "privilege": {{
+                "is_privileged": <true|false>,
+                "type": "<attorney-client|work-product|both|none>",
+                "reasoning": "<one sentence explanation>",
+                "waiver_risk": "<any actions that might waive privilege>"
+            }}
+        }}
+
+        ## Rules
+        - Extract only explicitly stated legal elements; do not infer legal conclusions
+        - Privilege assessment should be conservative (flag as privileged when in doubt)
+        - Never provide legal advice or predict case outcomes
+        - Use null for fields where information is not present in the document
+        - Risk assessment should focus on procedural and substantive legal risks, not business risks
+      AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
+      IdleSessionTTLInSeconds: 1800
+      FoundationModel: !Ref FoundationModelId
+
+  LegalAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentAliasName: !Sub "${EnvironmentName}-LegalAnalysisAgent"
+      AgentId: !Ref LegalAgent
+
+  # IAM Policy for the collaborative Bedrock Agent
+  CollabAgentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Policy for Collaborative Bedrock Agent to invoke foundation models and collaborate with other agents"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AmazonBedrockAgentBedrockFoundationModelPolicyProd"
+            Effect: "Allow"
+            Action:
+              - "bedrock:InvokeModel"
+              - "bedrock:InvokeModelWithResponseStream"
+              - "bedrock:GetInferenceProfile"
+              - "bedrock:GetFoundationModel"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${FoundationModelId}"
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:application-inference-profile/*"
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*"
+          - Sid: "AmazonBedrockAgentCrossRegionModelInvocation"
+            Effect: "Allow"
+            Action:
+              - "bedrock:InvokeModel"
+              - "bedrock:InvokeModelWithResponseStream"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-1::foundation-model/amazon.nova-pro-v1:0"
+              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-2::foundation-model/amazon.nova-pro-v1:0"
+            Condition:
+              StringLike:
+                "bedrock:InferenceProfileArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:*:inference-profile/${FoundationModelId}"
+
+          - Sid: "AmazonBedrockAgentsMultiAgentsPoliciesProd"
+            Effect: "Allow"
+            Action:
+              - "bedrock:GetAgentAlias"
+              - "bedrock:InvokeAgent"
+            Resource:
+              - !GetAtt LegalAgentAlias.AgentAliasArn
+              - !GetAtt EmailAgentAlias.AgentAliasArn
+              - !GetAtt ContractAgentAlias.AgentAliasArn
+              - !GetAtt ClassificationAgentAlias.AgentAliasArn
+
+  # IAM Role for the collaborator agent
+  BedrockCollabAgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CollabAgentPolicy
+      Description: "Role for Collaborative Bedrock Agent to invoke foundation models and collaborate with other agents"
+
+  CollabBedrockAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${EnvironmentName}-eDiscoveryCollaboratorAgent"
+      FoundationModel: !Ref FoundationModelId
+      GuardrailConfiguration:
+        GuardrailIdentifier: !Ref LegalDocGuardrail
+        GuardrailVersion: !GetAtt LegalDocGuardrailVersion.Version
+      Instruction: |
+          You are a supervisor agent that coordinates document analysis across specialized agents. Your primary responsibility is to orchestrate the document analysis workflow by:
+            1. First using the Document Classification Agent to identify document type and detect sensitive PII
+            2. Then routing to the appropriate specialized agent based on document classification
+            3. Finally synthesizing all insights into a comprehensive, actionable report
+
+          Available Specialized Agents
+            You will coordinate with these Amazon Bedrock agents:
+              1. Document Classification Agent - Identifies document type and flags sensitive PII data
+              2. Contracts Agent - Reviews and extracts key elements from contracts, agreements, and terms
+              3. Email Analysis Agent - Processes email communications, threads, and correspondence
+              4. Legal Document Agent - Analyzes legal documentation, compliance issues, and implications
+
+          Workflow Process
+            1. Initial Classification:
+              - Submit document to Document Classification Agent
+              - Receive document type and PII assessment
+              - Determine appropriate specialized agent
+
+            2. Specialized Analysis:
+              - Route document to the appropriate specialized agent
+              - Request comprehensive analysis based on document type
+              - Receive detailed findings in JSON format
+
+            3. Synthesis and Reporting:
+              - Integrate all findings from specialized agents
+              - Generate comprehensive analysis report
+              - Highlight critical insights and recommended actions
+
+          Comprehensive Report Generation
+            After receiving the specialized agent's complete analysis, synthesize all findings into a comprehensive report:
+
+            1. Agent Consultation Record:
+                Agent Consulted: [Contract/Email/Legal Document] Agent
+                Agent Response: [INCLUDE FULL JSON RESPONSE]
+
+            2. Final Analysis Report:
+                {
+                  "executive_summary": {
+                    "key_points": [],
+                    "risk_level": "HIGH/MEDIUM/LOW",
+                    "immediate_actions": []
+                  },
+                  "key_findings": {
+                    "pii_related": [],
+                    "legal_related": [],
+                    "business_related": []
+                  },
+                  "risk_assessment": {
+                    "overall_risk": "HIGH/MEDIUM/LOW",
+                    "risk_factors": [],
+                    "mitigation_suggestions": []
+                  },
+                  "recommended_actions": {
+                    "immediate": [],
+                    "short_term": [],
+                    "long_term": []
+                  },
+                  "detailed_analysis": {
+                    "by_category": {},
+                    "cross_references": [],
+                    "special_considerations": []
+                  }
+                }
+
+          Response Requirements
+            - Always maintain document confidentiality and security
+            - Prioritize findings based on risk level and business impact
+            - Ensure all PII concerns are prominently highlighted
+            - Provide actionable recommendations with clear justification
+            - Format all outputs according to the specified JSON structure
+      AgentResourceRoleArn: !GetAtt BedrockCollabAgentExecutionRole.Arn
+      IdleSessionTTLInSeconds: 1800
+      AutoPrepare: true
+      AgentCollaboration: "SUPERVISOR"
+      AgentCollaborators:
+        - AgentDescriptor:
+            AliasArn: !GetAtt LegalAgentAlias.AgentAliasArn
+          CollaborationInstruction: |
+            Analyze for:
+              - Legal arguments
+              - Citations
+              - Precedents
+              - Risk factors
+              - Privilege indicators
+              
+              Return JSON format:
+              {{
+                  "legal_arguments": [],
+                  "citations": [],
+                  "precedents": [],
+                  "risk_factors": {{
+                      "high": [],
+                      "medium": [],
+                      "low": []
+                  }},
+                  "privilege": {{
+                      "is_privileged": true/false,
+                      "type": "",
+                      "reasoning": ""
+                  }}
+              }}
+          CollaboratorName: "LegalAgent"
+          RelayConversationHistory: "TO_COLLABORATOR"
+
+        - AgentDescriptor:
+            AliasArn: !GetAtt EmailAgentAlias.AgentAliasArn
+          CollaborationInstruction: |
+              Analyze this email for:
+                - Sender/Recipients
+                - Key topics
+                - Action items
+                - Sentiment
+                - Potential legal implications
+                
+                Return JSON format:
+                {{
+                    "participants": {{
+                        "sender": "",
+                        "to": [],
+                        "cc": [],
+                        "bcc": []
+                    }},
+                    "topics": [],
+                    "action_items": [],
+                    "sentiment": {{
+                        "type": "POSITIVE/NEUTRAL/NEGATIVE",
+                        "score": 0-100
+                    }},
+                    "legal_implications": []
+                }}
+          CollaboratorName: "EmailAgent"
+          RelayConversationHistory: "TO_COLLABORATOR"
+
+        - AgentDescriptor:
+            AliasArn: !GetAtt ContractAgentAlias.AgentAliasArn
+          CollaborationInstruction: |
+              Analyze this contract for:
+              - Parties involved
+              - Key dates
+              - Financial terms
+              - Obligations
+              - Termination clauses
+              
+              Return JSON format:
+              {{
+                  "parties": [],
+                  "key_dates": {{
+                      "start_date": "",
+                      "end_date": "",
+                      "other_important_dates": []
+                  }},
+                  "financial_terms": {{
+                      "amounts": [],
+                      "payment_schedule": "",
+                      "currency": ""
+                  }},
+                  "obligations": {{
+                      "party_1": [],
+                      "party_2": []
+                  }},
+                  "termination": {{
+                      "conditions": [],
+                      "notice_period": "",
+                      "penalties": []
+                  }}
+              }}
+          CollaboratorName: "ContractAgent"
+          RelayConversationHistory: "TO_COLLABORATOR"
+
+        - AgentDescriptor:
+            AliasArn: !GetAtt ClassificationAgentAlias.AgentAliasArn
+          CollaborationInstruction: |
+            Step 1) Classify this document into one of these categories:
+                      - Contract
+                      - Email
+                      - Legal
+            
+            Step 2) Identify any PII (Personal Identifiable Information) in the following text:
+                      - Social Security Numbers
+                      - Email addresses
+                      - Phone numbers
+                      - Physical addresses
+            
+            Return JSON format:
+            {{
+                "category": "category_name",
+                "confidence_score": 0-100,
+                "reasoning": "brief explanation"
+            }},
+            {{
+                "found_pii": {{
+                    "ssn": [],
+                    "emails": [],
+                    "phones": [],
+                    "addresses": []
+                }},
+                "risk_level": "HIGH/MEDIUM/LOW",
+                "total_pii_count": 0
+            }}
+          CollaboratorName: "ClassificationAgent"
+          RelayConversationHistory: "TO_COLLABORATOR"
+
+  CollabBedrockAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentAliasName: !Sub "${EnvironmentName}-ACollabBedrockAgent"
+      AgentId: !Ref CollabBedrockAgent
+
+Outputs:
+  CollabBedrockAgentId:
+    Description: Collaborator Agent ID
+    Value: !GetAtt CollabBedrockAgent.AgentId
+    Export:
+      Name: !Sub "${EnvironmentName}-CollabBedrockAgentId"
+
+  CollabBedrockAgentAliasId:
+    Description: Collaborator Agent Alias ID
+    Value: !GetAtt CollabBedrockAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub "${EnvironmentName}-CollabBedrockAgentAliasId"
+
+  GuardrailId:
+    Description: Bedrock Guardrail ID
+    Value: !Ref LegalDocGuardrail
+    Export:
+      Name: !Sub "${EnvironmentName}-GuardrailId"
+
+  GuardrailArn:
+    Description: Bedrock Guardrail ARN
+    Value: !GetAtt LegalDocGuardrail.GuardrailArn
+    Export:
+      Name: !Sub "${EnvironmentName}-GuardrailArn"
+
+  KnowledgeBaseBucketName:
+    Condition: CreateKnowledgeBase
+    Description: S3 bucket for Knowledge Base documents
+    Value: !Ref KnowledgeBaseBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-KBBucket"
