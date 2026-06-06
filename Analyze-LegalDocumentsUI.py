@@ -964,7 +964,7 @@ else:
     # Chat interface once document is uploaded
     if st.session_state.document_uploaded:
         # Create tabs for different views
-        tab1, tab2 = st.tabs(["Chat", "Document Preview"])
+        tab1, tab2, tab3 = st.tabs(["💬 Chat", "📊 Dashboard", "📄 Document"])
 
         with tab1:
             st.markdown(
@@ -1026,6 +1026,121 @@ else:
                 st.rerun()
 
         with tab2:
+            st.markdown('<h2 class="sub-header">Analysis Dashboard</h2>', unsafe_allow_html=True)
+
+            # Get the latest analysis content
+            last_analysis = None
+            for msg in reversed(st.session_state.messages):
+                if msg["role"] == "assistant":
+                    last_analysis = msg["content"]
+                    break
+
+            if last_analysis and isinstance(last_analysis, dict) and last_analysis.get('_type') == 'synthesis_report':
+                report_data = last_analysis
+
+                # --- KPI Metrics Row ---
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    pii_count = len(report_data.get('pii_findings', []))
+                    st.metric("🔒 PII Items Found", pii_count, delta_color="inverse")
+                with col2:
+                    findings_count = sum(len(f) for f in report_data.get('key_findings_by_category', {}).values())
+                    st.metric("🔍 Key Findings", findings_count)
+                with col3:
+                    risk = report_data.get('risk_assessment', 'Unknown')
+                    risk_label = "HIGH" if "high" in risk.lower() else "MEDIUM" if "medium" in risk.lower() else "LOW"
+                    st.metric("⚠️ Risk Level", risk_label)
+                with col4:
+                    actions_count = len(report_data.get('recommended_actions', []))
+                    st.metric("✅ Actions Required", actions_count)
+
+                st.markdown("---")
+
+                # --- Charts Row ---
+                col_left, col_right = st.columns(2)
+
+                with col_left:
+                    # PII Types Distribution
+                    st.markdown("**PII Distribution by Type**")
+                    pii_findings = report_data.get('pii_findings', [])
+                    if pii_findings:
+                        pii_types = {}
+                        for f in pii_findings:
+                            pii_type = f.get('finding_type', 'unknown')
+                            pii_types[pii_type] = pii_types.get(pii_type, 0) + 1
+                        import pandas as pd
+                        df_pii = pd.DataFrame(list(pii_types.items()), columns=['Type', 'Count'])
+                        st.bar_chart(df_pii.set_index('Type'))
+                    else:
+                        st.success("No PII detected in this document.")
+
+                with col_right:
+                    # Findings by Category
+                    st.markdown("**Findings by Category**")
+                    key_findings = report_data.get('key_findings_by_category', {})
+                    if key_findings:
+                        import pandas as pd
+                        categories = {k: len(v) for k, v in key_findings.items()}
+                        df_cat = pd.DataFrame(list(categories.items()), columns=['Category', 'Count'])
+                        st.bar_chart(df_cat.set_index('Category'))
+                    else:
+                        st.info("No categorized findings in this analysis.")
+
+                st.markdown("---")
+
+                # --- Processing Stats ---
+                if st.session_state.processing_result:
+                    result_info = st.session_state.processing_result
+                    st.markdown("**Processing Statistics**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Chunks", result_info.get('total_chunks', 0))
+                    with col2:
+                        st.metric("Successful", result_info.get('successful_chunks', 0))
+                    with col3:
+                        elapsed = DocumentProcessor.format_elapsed_time(result_info.get('processing_time_seconds', 0))
+                        st.metric("Processing Time", elapsed)
+
+                    # Processing success rate
+                    total = result_info.get('total_chunks', 1)
+                    success = result_info.get('successful_chunks', 0)
+                    if total > 0:
+                        rate = success / total
+                        st.progress(rate, text=f"Chunk success rate: {rate*100:.0f}%")
+
+                st.markdown("---")
+
+                # --- Document Classification ---
+                st.markdown("**Document Classification**")
+                classification = report_data.get('document_classification', 'Unknown')
+                st.info(f"📁 **Type:** {classification}")
+
+                # --- Recommended Actions Timeline ---
+                actions = report_data.get('recommended_actions', [])
+                if actions:
+                    st.markdown("**Recommended Actions**")
+                    for i, action in enumerate(actions, 1):
+                        st.checkbox(action, key=f"action_{i}", value=False)
+
+            elif last_analysis and isinstance(last_analysis, str) and len(last_analysis) > 50:
+                # Simple analysis (pass-through) — show basic stats
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📄 Document Type", "Single-Pass Analysis")
+                with col2:
+                    word_count = len(st.session_state.document_content.split())
+                    st.metric("📝 Word Count", f"{word_count:,}")
+                with col3:
+                    char_count = len(st.session_state.document_content)
+                    st.metric("🔤 Characters", f"{char_count:,}")
+
+                st.markdown("---")
+                st.markdown("**Analysis Summary**")
+                st.markdown(last_analysis[:1000] if isinstance(last_analysis, str) else "Analysis complete.")
+            else:
+                st.info("Upload and analyze a document to see dashboard analytics.")
+
+        with tab3:
             st.markdown('<h2 class="sub-header">Document Content</h2>', unsafe_allow_html=True)
 
             # Display document content
