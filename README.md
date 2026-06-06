@@ -173,7 +173,7 @@ Document Text
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     eu-central-1                         │
+│                     eu-north-1                          │
 │                                                         │
 │  ┌───────────┐    ┌───────────┐    ┌───────────────┐   │
 │  │    ALB    │───▶│  Fargate  │───▶│    Bedrock    │   │
@@ -195,14 +195,72 @@ Document Text
 
 | Service | Resource | Purpose |
 |---------|----------|---------|
-| ECS Fargate | `legal-doc-analyzer` cluster | Runs the Streamlit container |
-| ALB | `legal-doc-alb` | Stable DNS, load balancing, future HTTPS |
-| ECR | `legal-doc-analyzer` repo | Docker image registry |
-| CodeCommit | `legal-doc-analyzer` repo | Source code repository |
-| CodeBuild | `legal-doc-analyzer-build` | Automated Docker builds on push |
-| Cognito | `legal-doc-analyzer-users` pool | User authentication (SRP) |
+| ECS Fargate | Cluster + Service | Runs the Streamlit container |
+| ALB | Application Load Balancer | Stable DNS, load balancing, sticky sessions |
+| ECR | Container Registry | Docker image storage |
+| CodeCommit | Source Repository | Git repository |
+| CodeBuild | Build Project | Automated Docker builds on push |
+| Cognito | User Pool | User authentication (SRP) |
 | Bedrock | Multi-agent with Nova Pro | AI inference (EU cross-region) |
-| CloudWatch | `/ecs/legal-doc-analyzer` | Application logs |
+| CloudWatch | Log Group | Application logs (14-day retention) |
+
+### CloudFormation Stacks
+
+All infrastructure is managed by 3 CloudFormation stacks — delete a stack = full cleanup:
+
+| Stack | Template | Resources |
+|-------|----------|-----------|
+| **Agents** | `LEGAL-Documents-Collab-Amazon-Model.yaml` | 5 Bedrock Agents, Guardrail, IAM roles, Knowledge Base |
+| **Infrastructure** | `LEGAL-Documents-Infrastructure.yaml` | ECS, ALB, ECR, CodeBuild, CodeCommit, Cognito, Security Groups, Logs |
+| **Batch Pipeline** | `LEGAL-Documents-BatchPipeline.yaml` | S3 buckets, Step Functions, Lambda, DynamoDB, EventBridge |
+
+### Deploy (3 steps)
+
+```bash
+# Step 1: Deploy Bedrock Agents
+aws cloudformation create-stack --stack-name legal-doc-agents \
+  --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
+  --parameters ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
+    ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
+  --capabilities CAPABILITY_IAM
+aws cloudformation wait stack-create-complete --stack-name legal-doc-agents
+
+# Get Agent IDs
+AGENT_ID=$(aws cloudformation describe-stacks --stack-name legal-doc-agents \
+  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentId`].OutputValue' --output text)
+ALIAS_ID=$(aws cloudformation describe-stacks --stack-name legal-doc-agents \
+  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentAliasId`].OutputValue' --output text)
+
+# Step 2: Deploy Infrastructure (ECS, ALB, Cognito, CI/CD)
+aws cloudformation create-stack --stack-name legal-doc-infra \
+  --template-body file://LEGAL-Documents-Infrastructure.yaml \
+  --parameters \
+    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
+    ParameterKey=AgentId,ParameterValue=$AGENT_ID \
+    ParameterKey=AgentAliasId,ParameterValue=$ALIAS_ID \
+    ParameterKey=VpcId,ParameterValue=<YOUR_VPC_ID> \
+    ParameterKey=PublicSubnet1,ParameterValue=<SUBNET_AZ1> \
+    ParameterKey=PublicSubnet2,ParameterValue=<SUBNET_AZ2> \
+  --capabilities CAPABILITY_IAM
+aws cloudformation wait stack-create-complete --stack-name legal-doc-infra
+
+# Step 3 (Optional): Deploy Batch Pipeline
+aws cloudformation create-stack --stack-name legal-doc-batch \
+  --template-body file://LEGAL-Documents-BatchPipeline.yaml \
+  --parameters \
+    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
+    ParameterKey=AgentId,ParameterValue=$AGENT_ID \
+    ParameterKey=AgentAliasId,ParameterValue=$ALIAS_ID \
+  --capabilities CAPABILITY_IAM
+```
+
+### Tear Down (full cleanup)
+
+```bash
+aws cloudformation delete-stack --stack-name legal-doc-batch
+aws cloudformation delete-stack --stack-name legal-doc-infra
+aws cloudformation delete-stack --stack-name legal-doc-agents
+```
 
 ---
 
@@ -210,7 +268,7 @@ Document Text
 
 ### Prerequisites
 
-- AWS CLI configured with appropriate permissions
+- AWS CLI configured: `aws configure` (set region to `eu-north-1`)
 - Docker installed (for local development)
 - Python 3.13+
 
@@ -252,10 +310,8 @@ docker run -p 8501:8501 \
 ### Deploy to AWS
 
 ```bash
-# Push code (triggers CodeBuild automatically)
-git add . && git commit -m "Update" && git push origin main
-
-# Or use the deploy script for manual push to ECR
+# See "CloudFormation Stacks" section above for full deployment commands
+# Or use the deploy script for manual Docker push:
 ./deploy.sh
 ```
 
