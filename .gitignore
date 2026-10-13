@@ -35,5 +35,9 @@ taskdef-resolved.json
 imagedefinitions.json
 *.log
 
+# Node (MCP server dependencies)
+node_modules/
+package-lock.json
+
 # Kiro
 .kiro/

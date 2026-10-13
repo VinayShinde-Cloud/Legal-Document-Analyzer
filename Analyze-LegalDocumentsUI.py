@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import streamlit as st
 import boto3
 import uuid
@@ -6,6 +8,7 @@ import json
 from datetime import datetime
 import io
 import os
+import html as html_lib
 
 # Additional imports for file processing
 import PyPDF2
@@ -179,20 +182,24 @@ COGNITO_POOL_ID = os.environ.get("COGNITO_POOL_ID", "")
 COGNITO_APP_CLIENT_ID = os.environ.get("COGNITO_APP_CLIENT_ID", "")
 COGNITO_APP_CLIENT_SECRET = os.environ.get("COGNITO_APP_CLIENT_SECRET", "")
 
-authenticator = CognitoAuthenticator(
-    pool_id=COGNITO_POOL_ID,
-    app_client_id=COGNITO_APP_CLIENT_ID,
-    app_client_secret=COGNITO_APP_CLIENT_SECRET,
-)
-
-# Show login form - blocks the rest of the app until authenticated
-is_logged_in = authenticator.login()
-if not is_logged_in:
-    st.stop()
+authenticator = None
+if COGNITO_POOL_ID and COGNITO_APP_CLIENT_ID:
+    try:
+        authenticator = CognitoAuthenticator(
+            pool_id=COGNITO_POOL_ID,
+            app_client_id=COGNITO_APP_CLIENT_ID,
+            app_client_secret=COGNITO_APP_CLIENT_SECRET,
+        )
+        is_logged_in = authenticator.login()
+        if not is_logged_in:
+            st.stop()
+    except Exception as e:
+        st.warning(f"Cognito auth initialization note: {e}")
 
 # User is authenticated
 def logout():
-    authenticator.logout()
+    if authenticator:
+        authenticator.logout()
 
 # Initialize session state
 if 'session_id' not in st.session_state:
@@ -212,13 +219,13 @@ if 'processing_result' not in st.session_state:
 
 # Default AWS region and agent configuration (read from environment variables if available)
 if 'aws_region' not in st.session_state:
-    st.session_state.aws_region = os.environ.get("AWS_REGION", "eu-north-1")
+    st.session_state.aws_region = os.environ.get("AWS_REGION", "us-east-1")
 if 'agent_id' not in st.session_state:
-    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "")
+    st.session_state.agent_id = os.environ.get("BEDROCK_AGENT_ID", "bedrock-converse-engine")
 if 'agent_alias_id' not in st.session_state:
-    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "")
+    st.session_state.agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "nova-v1")
 if 'config_saved' not in st.session_state:
-    st.session_state.config_saved = False
+    st.session_state.config_saved = True
 
 # Constants
 MAX_FILE_SIZE_MB = 25  # 25MB file size limit
@@ -320,93 +327,111 @@ def extract_text_from_file(uploaded_file):
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
-# Initialize Bedrock Agent Runtime client
-@st.cache_resource(show_spinner=False)
-def get_bedrock_agent_client(region):
-    return boto3.client('bedrock-agent-runtime', region_name=region)
-
+# Initialize Bedrock Converse Multi-Agent Engine
+import bedrock_agents
 
 def invoke_agent(input_text, max_retries=3):
-    """Invoke agent with retry logic for throttling."""
-    for attempt in range(max_retries):
-        try:
-            bedrock_agent = get_bedrock_agent_client(st.session_state.aws_region)
-
-            response = bedrock_agent.invoke_agent(
-                agentId=st.session_state.agent_id,
-                agentAliasId=st.session_state.agent_alias_id,
-                sessionId=st.session_state.session_id,
-                inputText=input_text
-            )
-
-            if 'completion' in response and hasattr(response['completion'], '__iter__'):
-                full_response = ""
-                for event in response['completion']:
-                    if isinstance(event, dict) and 'chunk' in event and 'bytes' in event['chunk']:
-                        chunk_text = event['chunk']['bytes'].decode('utf-8')
-                        full_response += chunk_text
-
-                try:
-                    return json.loads(full_response)
-                except (json.JSONDecodeError, ValueError):
-                    return full_response
-            else:
-                return "No completion found in response"
-
-        except bedrock_agent.exceptions.ThrottlingException:
-            if attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 10
-                st.toast(f"⏳ Rate limited. Retrying in {wait_time}s... (attempt {attempt + 2}/{max_retries})")
-                time.sleep(wait_time)
-            else:
-                return ("Error: Request rate too high. The multi-agent workflow triggers multiple model calls. "
-                        "Please wait 60 seconds and try again, or request a quota increase in the AWS Console "
-                        "under Service Quotas → Amazon Bedrock.")
-        except Exception as e:
-            if "throttling" in str(e).lower() or "ThrottlingException" in str(e):
-                if attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) * 10
-                    st.toast(f"⏳ Rate limited. Retrying in {wait_time}s... (attempt {attempt + 2}/{max_retries})")
-                    time.sleep(wait_time)
-                else:
-                    return ("Error: Request rate too high. Please wait 60 seconds and try again. "
-                            "Consider requesting a quota increase in AWS Console → Service Quotas → Amazon Bedrock.")
-            else:
-                return f"Error: {str(e)}"
-
-    return "Error: Max retries exceeded due to throttling."
+    """Invoke the agent engine for conversational chat with the document."""
+    try:
+        engine = bedrock_agents.get_agent_engine(st.session_state.aws_region)
+        doc_context = st.session_state.get("document_content", "")
+        return engine.chat(user_question=input_text, document_context=doc_context)
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
 def agent_invoker_for_processor(input_text: str) -> str | None:
-    """Agent invoker callable compatible with DocumentProcessor.
+    """Agent invoker for chunked processing and synthesis via Bedrock Converse API.
 
-    Wraps the existing invoke_agent function to return str or None
-    (None on failure), and raises exceptions for throttling so
-    DocumentProcessor can apply its own retry logic.
+    Coordinates the multi-agent workflow:
+    1. Classification & PII Detection Agent (Nova Lite)
+    2. Routed Specialist Agent: Contract, Email, or Legal (Nova Pro)
+    3. Supervisor Agent for synthesis (Nova Pro)
     """
-    try:
-        bedrock_agent = get_bedrock_agent_client(st.session_state.aws_region)
+    engine = bedrock_agents.get_agent_engine(st.session_state.aws_region)
+    return engine.invoke(input_text)
 
-        response = bedrock_agent.invoke_agent(
-            agentId=st.session_state.agent_id,
-            agentAliasId=st.session_state.agent_alias_id,
-            sessionId=st.session_state.session_id,
-            inputText=input_text
+
+def persist_analysis_result(filename: str, analysis_content, processing_result: dict) -> str | None:
+    """Persist analysis result to DynamoDB and S3.
+
+    Stores the analysis output in S3 as JSON and records metadata in DynamoDB,
+    matching the same schema used by the batch pipeline for consistency.
+
+    Args:
+        filename: Original document filename.
+        analysis_content: The analysis result (string or serialized dict).
+        processing_result: Processing metadata dict from DocumentProcessor.
+
+    Returns:
+        The document_id if persistence succeeded, None if not configured.
+    """
+    results_table = os.environ.get("RESULTS_TABLE", "")
+    output_bucket = os.environ.get("OUTPUT_BUCKET", "")
+
+    if not results_table or not output_bucket:
+        return None
+
+    try:
+        dynamodb = boto3.resource("dynamodb", region_name=st.session_state.aws_region)
+        s3_client = boto3.client("s3", region_name=st.session_state.aws_region)
+        table = dynamodb.Table(results_table)
+
+        document_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow().isoformat()
+
+        # Serialize analysis content
+        if isinstance(analysis_content, dict):
+            analysis_json = json.dumps(analysis_content, indent=2, default=str)
+        elif isinstance(analysis_content, str):
+            analysis_json = analysis_content
+        else:
+            analysis_json = str(analysis_content)
+
+        # Store in S3
+        result_key = f"results/{datetime.utcnow().strftime('%Y/%m/%d')}/{document_id}/{filename}.json"
+        s3_client.put_object(
+            Bucket=output_bucket,
+            Key=result_key,
+            Body=json.dumps({
+                "document_id": document_id,
+                "filename": filename,
+                "analysis": analysis_json,
+                "source": "streamlit_app",
+                "processed_at": timestamp,
+                "text_length": len(st.session_state.document_content),
+                "was_chunked": processing_result.get("was_chunked", False),
+                "total_chunks": processing_result.get("total_chunks", 0),
+                "successful_chunks": processing_result.get("successful_chunks", 0),
+                "failed_chunks": processing_result.get("failed_chunks", 0),
+                "processing_time_seconds": processing_result.get("processing_time_seconds", 0),
+            }, indent=2, default=str),
+            ContentType="application/json",
         )
 
-        if 'completion' in response and hasattr(response['completion'], '__iter__'):
-            full_response = ""
-            for event in response['completion']:
-                if isinstance(event, dict) and 'chunk' in event and 'bytes' in event['chunk']:
-                    chunk_text = event['chunk']['bytes'].decode('utf-8')
-                    full_response += chunk_text
-            return full_response if full_response else None
-        else:
-            return None
+        # Store metadata in DynamoDB
+        table.put_item(Item={
+            "document_id": document_id,
+            "upload_timestamp": timestamp,
+            "status": "COMPLETED",
+            "filename": filename,
+            "source": "streamlit_app",
+            "result_key": result_key,
+            "text_length": len(st.session_state.document_content),
+            "was_chunked": processing_result.get("was_chunked", False),
+            "total_chunks": processing_result.get("total_chunks", 0),
+            "successful_chunks": processing_result.get("successful_chunks", 0),
+            "failed_chunks": processing_result.get("failed_chunks", 0),
+            "processing_time_seconds": str(processing_result.get("processing_time_seconds", 0)),
+            "user": authenticator.get_username() if authenticator else "unknown",
+        })
+
+        return document_id
 
     except Exception as e:
-        # Re-raise so DocumentProcessor can handle throttling vs other errors
-        raise
+        # Non-fatal: log but don't block the user
+        st.toast(f"⚠️ Could not persist results: {str(e)[:100]}", icon="⚠️")
+        return None
 
 
 def build_chunk_config() -> ChunkConfig:
@@ -452,8 +477,8 @@ def render_synthesis_report(report: SynthesisReport):
             location_ref = f"[Chunk {finding.chunk_position}, offset {finding.char_offset_start}-{finding.char_offset_end}]"
             st.markdown(
                 f'<div class="finding-item">'
-                f'<strong>{finding.finding_type}:</strong> {finding.entity_value} — '
-                f'{finding.description} <em>{location_ref}</em>'
+                f'<strong>{html_lib.escape(finding.finding_type)}:</strong> {html_lib.escape(finding.entity_value)} — '
+                f'{html_lib.escape(finding.description)} <em>{html_lib.escape(location_ref)}</em>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -464,12 +489,12 @@ def render_synthesis_report(report: SynthesisReport):
     st.markdown('<div class="section-header">🔍 Key Findings</div>', unsafe_allow_html=True)
     if report.key_findings_by_category:
         for category, findings in report.key_findings_by_category.items():
-            st.markdown(f"**{category}**")
+            st.markdown(f"**{html_lib.escape(category)}**")
             for finding in findings:
                 location_ref = f"[Chunk {finding.chunk_position}, offset {finding.char_offset_start}-{finding.char_offset_end}]"
                 st.markdown(
                     f'<div class="finding-item">'
-                    f'{finding.entity_value} — {finding.description} <em>{location_ref}</em>'
+                    f'{html_lib.escape(finding.entity_value)} — {html_lib.escape(finding.description)} <em>{html_lib.escape(location_ref)}</em>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
@@ -484,7 +509,7 @@ def render_synthesis_report(report: SynthesisReport):
     st.markdown('<div class="section-header">✅ Recommended Actions</div>', unsafe_allow_html=True)
     if report.recommended_actions:
         for i, action in enumerate(report.recommended_actions, 1):
-            st.markdown(f"{i}. {action}")
+            st.markdown(f"{i}. {html_lib.escape(action)}")
     else:
         st.markdown("No specific actions recommended.")
 
@@ -492,11 +517,11 @@ def render_synthesis_report(report: SynthesisReport):
     if report.coverage_gaps:
         st.markdown('<div class="section-header">📊 Coverage Gaps</div>', unsafe_allow_html=True)
         for gap in report.coverage_gaps:
-            heading_info = f" (Section: {gap.section_heading})" if gap.section_heading else ""
+            heading_info = f" (Section: {html_lib.escape(gap.section_heading)})" if gap.section_heading else ""
             st.markdown(
                 f'<div class="coverage-gap-warning">'
                 f'⚠️ <strong>Chunk {gap.chunk_position}{heading_info}:</strong> '
-                f'{gap.error_message} (Category: {gap.error_category})'
+                f'{html_lib.escape(gap.error_message)} (Category: {html_lib.escape(gap.error_category)})'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -513,13 +538,15 @@ def render_message_content(content):
             content_json = json.loads(content)
             st.json(content_json)
         except (json.JSONDecodeError, ValueError):
+            escaped = html_lib.escape(content)
             st.markdown(
-                f'<div class="assistant-message">{content}</div>',
+                f'<div class="assistant-message">{escaped}</div>',
                 unsafe_allow_html=True
             )
     else:
+        escaped = html_lib.escape(str(content))
         st.markdown(
-            f'<div class="assistant-message">{content}</div>',
+            f'<div class="assistant-message">{escaped}</div>',
             unsafe_allow_html=True
         )
 
@@ -631,8 +658,10 @@ with st.sidebar:
 
     # Show logged-in user and logout
     st.markdown("---")
-    st.markdown(f"👤 **{authenticator.get_username()}**")
-    st.button("Logout", on_click=logout, type="secondary")
+    username = authenticator.get_username() if authenticator else "Admin / Local Session"
+    st.markdown(f"👤 **{username}**")
+    if authenticator:
+        st.button("Logout", on_click=logout, type="secondary")
 
     # Configuration section
     st.markdown("### Agent Configuration")
@@ -955,6 +984,15 @@ else:
                                 {"role": "assistant", "content": report_content}
                             )
 
+                            # Persist results to DynamoDB + S3
+                            doc_id = persist_analysis_result(
+                                filename=uploaded_file.name,
+                                analysis_content=report_content,
+                                processing_result=st.session_state.processing_result,
+                            )
+                            if doc_id:
+                                st.toast(f"✅ Results persisted (ID: {doc_id[:8]}...)", icon="💾")
+
                             # Force a rerun to show the chat interface
                             st.rerun()
 
@@ -1005,7 +1043,7 @@ else:
                     if message["role"] == "user":
                         with st.chat_message("user", avatar="👤"):
                             st.markdown(
-                                f'<div class="user-message">{message["content"]}</div>',
+                                f'<div class="user-message">{html_lib.escape(str(message["content"]))}</div>',
                                 unsafe_allow_html=True
                             )
                     else:

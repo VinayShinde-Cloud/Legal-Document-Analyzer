@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Legal Document Analyzer — ECS Fargate, ALB, ECR, CodeBuild, Cognito, and CI/CD Infrastructure
+Description: Legal Document Analyzer — ECS Fargate, ALB, ECR, CodeBuild, Cognito, WAF, and CI/CD Infrastructure
 
 Parameters:
   EnvironmentName:
@@ -12,6 +12,50 @@ Parameters:
   AgentAliasId:
     Type: String
     Description: Bedrock Collaborator Agent Alias ID (from agent stack outputs)
+  ClassificationAgentId:
+    Type: String
+    Default: ""
+    Description: Classification Agent ID (from agent stack outputs)
+  ClassificationAliasId:
+    Type: String
+    Default: ""
+    Description: Classification Agent Alias ID (from agent stack outputs)
+  ContractAgentId:
+    Type: String
+    Default: ""
+    Description: Contract Agent ID (from agent stack outputs)
+  ContractAliasId:
+    Type: String
+    Default: ""
+    Description: Contract Agent Alias ID (from agent stack outputs)
+  EmailAgentId:
+    Type: String
+    Default: ""
+    Description: Email Agent ID (from agent stack outputs)
+  EmailAliasId:
+    Type: String
+    Default: ""
+    Description: Email Agent Alias ID (from agent stack outputs)
+  LegalAgentId:
+    Type: String
+    Default: ""
+    Description: Legal Agent ID (from agent stack outputs)
+  LegalAliasId:
+    Type: String
+    Default: ""
+    Description: Legal Agent Alias ID (from agent stack outputs)
+  ResultsTableName:
+    Type: String
+    Default: ""
+    Description: DynamoDB results table name (from batch stack outputs)
+  OutputBucketName:
+    Type: String
+    Default: ""
+    Description: S3 output bucket name (from batch stack outputs)
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM Certificate ARN for HTTPS. If empty, only HTTP listener is created.
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC ID for networking
@@ -22,26 +66,33 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
     Description: Second public subnet (different AZ)
 
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+
 Resources:
   # ============================================================
-  # COGNITO — User Authentication
+  # COGNITO — User Authentication (MFA optional, stronger password)
   # ============================================================
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub "${EnvironmentName}-users"
       AutoVerifiedAttributes:
         - email
       UsernameAttributes:
         - email
-      MfaConfiguration: "OFF"
+      MfaConfiguration: "OPTIONAL"
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
       Policies:
         PasswordPolicy:
-          MinimumLength: 8
+          MinimumLength: 12
           RequireUppercase: true
           RequireLowercase: true
           RequireNumbers: true
-          RequireSymbols: false
+          RequireSymbols: true
       Schema:
         - Name: email
           Required: true
@@ -87,6 +138,64 @@ Resources:
           }
 
   # ============================================================
+  # WAF — Rate limiting and basic protection
+  # ============================================================
+  WAFWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${EnvironmentName}-waf"
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${EnvironmentName}-waf-metrics"
+      Rules:
+        - Name: RateLimitRule
+          Priority: 1
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 300
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${EnvironmentName}-rate-limit"
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${EnvironmentName}-common-rules"
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${EnvironmentName}-bad-inputs"
+
+  WAFAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref ApplicationLoadBalancer
+      WebACLArn: !GetAtt WAFWebACL.Arn
+
+  # ============================================================
   # SECURITY GROUPS
   # ============================================================
   ALBSecurityGroup:
@@ -116,7 +225,7 @@ Resources:
           SourceSecurityGroupId: !Ref ALBSecurityGroup
 
   # ============================================================
-  # ALB — Application Load Balancer
+  # ALB — Application Load Balancer (with drop invalid headers)
   # ============================================================
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -129,6 +238,9 @@ Resources:
         - !Ref PublicSubnet2
       SecurityGroups:
         - !Ref ALBSecurityGroup
+      LoadBalancerAttributes:
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: "true"
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -150,6 +262,7 @@ Resources:
         - Key: stickiness.lb_cookie.duration_seconds
           Value: "86400"
 
+  # HTTP Listener — forwards if no cert, redirects to HTTPS if cert exists
   HTTPListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -157,11 +270,33 @@ Resources:
       Protocol: HTTP
       Port: 80
       DefaultActions:
+        - !If
+          - HasCertificate
+          - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: "443"
+              StatusCode: HTTP_301
+          - Type: forward
+            TargetGroupArn: !Ref TargetGroup
+
+  # HTTPS Listener — only created when CertificateArn is provided
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
   # ============================================================
-  # IAM ROLES — ECS
+  # IAM ROLES — ECS (least-privilege)
   # ============================================================
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
@@ -186,8 +321,34 @@ Resources:
             Principal:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+      Policies:
+        - PolicyName: BedrockAgentInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: "*"
+        - PolicyName: ResultsPersistenceAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResultsTableName}"
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ResultsTableName}/index/*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${OutputBucketName}/*"
 
   # ============================================================
   # ECS — Cluster, Task Definition, Service
@@ -200,9 +361,10 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: "/ecs/legal-doc-analyzer"
-      RetentionInDays: 14
+      RetentionInDays: 90
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -229,10 +391,30 @@ Resources:
               Value: !Ref AgentId
             - Name: BEDROCK_AGENT_ALIAS_ID
               Value: !Ref AgentAliasId
+            - Name: CLASSIFICATION_AGENT_ID
+              Value: !Ref ClassificationAgentId
+            - Name: CLASSIFICATION_ALIAS_ID
+              Value: !Ref ClassificationAliasId
+            - Name: CONTRACT_AGENT_ID
+              Value: !Ref ContractAgentId
+            - Name: CONTRACT_ALIAS_ID
+              Value: !Ref ContractAliasId
+            - Name: EMAIL_AGENT_ID
+              Value: !Ref EmailAgentId
+            - Name: EMAIL_ALIAS_ID
+              Value: !Ref EmailAliasId
+            - Name: LEGAL_AGENT_ID
+              Value: !Ref LegalAgentId
+            - Name: LEGAL_ALIAS_ID
+              Value: !Ref LegalAliasId
             - Name: COGNITO_POOL_ID
               Value: !Ref CognitoUserPool
             - Name: COGNITO_APP_CLIENT_ID
               Value: !Ref CognitoUserPoolClient
+            - Name: RESULTS_TABLE
+              Value: !Ref ResultsTableName
+            - Name: OUTPUT_BUCKET
+              Value: !Ref OutputBucketName
             - Name: CHUNK_MAX_SIZE
               Value: "8000"
             - Name: CHUNK_MIN_SIZE
@@ -275,7 +457,7 @@ Resources:
           ContainerPort: 8501
 
   # ============================================================
-  # CODEBUILD — CI/CD
+  # CODEBUILD — CI/CD (scoped IAM)
   # ============================================================
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -294,12 +476,25 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - ecr:*
+                  - ecr:GetAuthorizationToken
                 Resource: "*"
               - Effect: Allow
                 Action:
-                  - logs:*
-                Resource: "*"
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt ECRRepository.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-build*"
               - Effect: Allow
                 Action:
                   - codecommit:GitPull
@@ -335,7 +530,10 @@ Resources:
 Outputs:
   AppURL:
     Description: Application URL
-    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+    Value: !If
+      - HasCertificate
+      - !Sub "https://${ApplicationLoadBalancer.DNSName}"
+      - !Sub "http://${ApplicationLoadBalancer.DNSName}"
 
   CognitoUserPoolId:
     Description: Cognito User Pool ID

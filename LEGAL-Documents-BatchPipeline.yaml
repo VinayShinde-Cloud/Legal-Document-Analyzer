@@ -12,6 +12,30 @@ Parameters:
   AgentAliasId:
     Type: String
     Description: Bedrock Collaborator Agent Alias ID from the agent stack
+  ClassificationAgentId:
+    Type: String
+    Description: Classification Agent ID from the agent stack
+  ClassificationAliasId:
+    Type: String
+    Description: Classification Agent Alias ID from the agent stack
+  ContractAgentId:
+    Type: String
+    Description: Contract Agent ID from the agent stack
+  ContractAliasId:
+    Type: String
+    Description: Contract Agent Alias ID from the agent stack
+  EmailAgentId:
+    Type: String
+    Description: Email Agent ID from the agent stack
+  EmailAliasId:
+    Type: String
+    Description: Email Agent Alias ID from the agent stack
+  LegalAgentId:
+    Type: String
+    Description: Legal Agent ID from the agent stack
+  LegalAliasId:
+    Type: String
+    Description: Legal Agent Alias ID from the agent stack
   MaxConcurrency:
     Type: Number
     Default: 5
@@ -132,11 +156,6 @@ Resources:
                 Action:
                   - bedrock:InvokeAgent
                 Resource: "*"
-              - Effect: Allow
-                Action:
-                  - textract:DetectDocumentText
-                  - textract:AnalyzeDocument
-                Resource: "*"
 
   StepFunctionsRole:
     Type: AWS::IAM::Role
@@ -192,6 +211,8 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 120
       MemorySize: 512
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:pypdf2-layer:2"
       Environment:
         Variables:
           INPUT_BUCKET: !Ref InputBucket
@@ -201,13 +222,39 @@ Resources:
           import boto3
           import json
           import os
+          import io
           import uuid
+          import zipfile
+          import re
           from datetime import datetime
+
+          import PyPDF2
 
           s3 = boto3.client('s3')
           dynamodb = boto3.resource('dynamodb')
-          textract = boto3.client('textract')
           table = dynamodb.Table(os.environ['RESULTS_TABLE'])
+
+
+          def extract_pdf_text(file_bytes):
+              """Extract text from PDF using PyPDF2."""
+              reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+              text_parts = []
+              for page in reader.pages:
+                  page_text = page.extract_text()
+                  if page_text:
+                      text_parts.append(page_text)
+              return '\n'.join(text_parts).strip()
+
+
+          def extract_docx_text(file_bytes):
+              """Extract text from DOCX by reading the XML inside the zip archive."""
+              text_parts = []
+              with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                  if 'word/document.xml' in zf.namelist():
+                      xml_content = zf.read('word/document.xml').decode('utf-8')
+                      text_parts = re.findall(r'<w:t[^>]*>(.*?)</w:t>', xml_content)
+              return ' '.join(text_parts).strip()
+
 
           def handler(event, context):
               bucket = event['detail']['bucket']['name']
@@ -232,23 +279,25 @@ Resources:
                   'file_type': ext,
               })
               
+              # Download file from S3
+              obj = s3.get_object(Bucket=bucket, Key=key)
+              file_bytes = obj['Body'].read()
+              
               # Extract text based on file type
               if ext == 'pdf':
-                  # Use Textract for PDFs
-                  response = textract.detect_document_text(
-                      Document={'S3Object': {'Bucket': bucket, 'Name': key}}
-                  )
-                  text = '\n'.join([
-                      block['Text'] for block in response['Blocks']
-                      if block['BlockType'] == 'LINE'
-                  ])
+                  text = extract_pdf_text(file_bytes)
+              elif ext in ['docx', 'doc']:
+                  text = extract_docx_text(file_bytes)
               elif ext == 'txt':
-                  obj = s3.get_object(Bucket=bucket, Key=key)
-                  text = obj['Body'].read().decode('utf-8')
+                  text = file_bytes.decode('utf-8')
               else:
-                  # For DOCX, read raw and do basic extraction
-                  obj = s3.get_object(Bucket=bucket, Key=key)
-                  text = f"[Document: {key}] - Content extraction for {ext} files requires additional processing."
+                  text = ''
+              
+              if not text.strip():
+                  return {
+                      'status': 'skipped',
+                      'reason': f'No text could be extracted from {key}'
+                  }
               
               return {
                   'document_id': document_id,
@@ -256,7 +305,7 @@ Resources:
                   'filename': key.split('/')[-1],
                   's3_bucket': bucket,
                   's3_key': key,
-                  'text': text[:25000],  # Cap at 25K chars
+                  'text': text[:25000],
                   'text_length': len(text),
                   'file_type': ext,
               }
@@ -268,13 +317,21 @@ Resources:
       Runtime: python3.13
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 300
+      Timeout: 600
       MemorySize: 256
       Environment:
         Variables:
           AGENT_ID: !Ref AgentId
           AGENT_ALIAS_ID: !Ref AgentAliasId
           RESULTS_TABLE: !Ref ResultsTable
+          CLASSIFICATION_AGENT_ID: !Ref ClassificationAgentId
+          CLASSIFICATION_ALIAS_ID: !Ref ClassificationAliasId
+          CONTRACT_AGENT_ID: !Ref ContractAgentId
+          CONTRACT_ALIAS_ID: !Ref ContractAliasId
+          EMAIL_AGENT_ID: !Ref EmailAgentId
+          EMAIL_ALIAS_ID: !Ref EmailAliasId
+          LEGAL_AGENT_ID: !Ref LegalAgentId
+          LEGAL_ALIAS_ID: !Ref LegalAliasId
       Code:
         ZipFile: |
           import boto3
@@ -287,14 +344,57 @@ Resources:
           dynamodb = boto3.resource('dynamodb')
           table = dynamodb.Table(os.environ['RESULTS_TABLE'])
 
+          # Agent configuration - direct calls bypass supervisor timeout issues
+          AGENTS = {
+              'classification': {
+                  'id': os.environ.get('CLASSIFICATION_AGENT_ID', ''),
+                  'alias': os.environ.get('CLASSIFICATION_ALIAS_ID', ''),
+              },
+              'Contract': {
+                  'id': os.environ.get('CONTRACT_AGENT_ID', ''),
+                  'alias': os.environ.get('CONTRACT_ALIAS_ID', ''),
+              },
+              'Email': {
+                  'id': os.environ.get('EMAIL_AGENT_ID', ''),
+                  'alias': os.environ.get('EMAIL_ALIAS_ID', ''),
+              },
+              'Legal': {
+                  'id': os.environ.get('LEGAL_AGENT_ID', ''),
+                  'alias': os.environ.get('LEGAL_ALIAS_ID', ''),
+              },
+          }
+
+          def invoke_agent(agent_key, text, max_retries=3):
+              """Invoke a single agent with retry logic."""
+              agent = AGENTS[agent_key]
+              for attempt in range(max_retries):
+                  try:
+                      response = bedrock_agent.invoke_agent(
+                          agentId=agent['id'],
+                          agentAliasId=agent['alias'],
+                          sessionId=str(uuid.uuid4()),
+                          inputText=text
+                      )
+                      full_response = ""
+                      if 'completion' in response:
+                          for event_chunk in response['completion']:
+                              if isinstance(event_chunk, dict) and 'chunk' in event_chunk:
+                                  if 'bytes' in event_chunk['chunk']:
+                                      full_response += event_chunk['chunk']['bytes'].decode('utf-8')
+                      return full_response if full_response else None
+                  except Exception as e:
+                      error_str = str(e).lower()
+                      is_retryable = ('throttling' in error_str or 'timeout' in error_str or 'dependencyfailed' in error_str)
+                      if is_retryable and attempt < max_retries - 1:
+                          time.sleep((2 ** attempt) * 10)
+                          continue
+                      raise
+              return None
+
           def handler(event, context):
               document_id = event['document_id']
               text = event['text']
               filename = event['filename']
-              
-              agent_id = os.environ['AGENT_ID']
-              agent_alias_id = os.environ['AGENT_ALIAS_ID']
-              session_id = str(uuid.uuid4())
               
               # Update status
               table.update_item(
@@ -304,49 +404,53 @@ Resources:
                   ExpressionAttributeValues={':s': 'ANALYZING'}
               )
               
-              # Invoke Bedrock Agent with retry
-              prompt = f"Please analyze this {filename} document:\n\n{text}"
-              
-              max_retries = 3
-              for attempt in range(max_retries):
-                  try:
-                      response = bedrock_agent.invoke_agent(
-                          agentId=agent_id,
-                          agentAliasId=agent_alias_id,
-                          sessionId=session_id,
-                          inputText=prompt
-                      )
-                      
-                      full_response = ""
-                      if 'completion' in response:
-                          for event_chunk in response['completion']:
-                              if isinstance(event_chunk, dict) and 'chunk' in event_chunk:
-                                  if 'bytes' in event_chunk['chunk']:
-                                      full_response += event_chunk['chunk']['bytes'].decode('utf-8')
-                      
-                      return {
-                          'document_id': document_id,
-                          'timestamp': event['timestamp'],
-                          'filename': filename,
-                          'analysis': full_response,
-                          'status': 'COMPLETED',
-                          'text_length': event['text_length'],
-                      }
-                      
-                  except Exception as e:
-                      if 'throttling' in str(e).lower() and attempt < max_retries - 1:
-                          time.sleep((2 ** attempt) * 10)
-                          continue
-                      
-                      return {
-                          'document_id': document_id,
-                          'timestamp': event['timestamp'],
-                          'filename': filename,
-                          'analysis': None,
-                          'status': 'FAILED',
-                          'error': str(e),
-                          'text_length': event.get('text_length', 0),
-                      }
+              try:
+                  # Step 1: Classification (use first 5000 chars)
+                  classification_result = invoke_agent('classification', text[:5000])
+                  
+                  # Step 2: Determine document type and route to specialist
+                  doc_type = 'Contract'  # default
+                  if classification_result:
+                      try:
+                          # Handle double-braces from agent output
+                          clean = classification_result.replace('{{', '{').replace('}}', '}')
+                          parsed = json.loads(clean)
+                          if isinstance(parsed, dict) and 'classification' in parsed:
+                              doc_type = parsed['classification'].get('category', 'Contract')
+                      except (json.JSONDecodeError, ValueError):
+                          pass
+                  
+                  # Step 3: Specialist analysis (use first 5000 chars)
+                  specialist_result = invoke_agent(doc_type, text[:5000])
+                  
+                  # Combine results
+                  analysis = json.dumps({
+                      'classification': classification_result,
+                      'specialist_analysis': specialist_result,
+                      'document_type': doc_type,
+                      'filename': filename,
+                      'text_length': event['text_length'],
+                  }, indent=2)
+                  
+                  return {
+                      'document_id': document_id,
+                      'timestamp': event['timestamp'],
+                      'filename': filename,
+                      'analysis': analysis,
+                      'status': 'COMPLETED',
+                      'text_length': event['text_length'],
+                  }
+                  
+              except Exception as e:
+                  return {
+                      'document_id': document_id,
+                      'timestamp': event['timestamp'],
+                      'filename': filename,
+                      'analysis': None,
+                      'status': 'FAILED',
+                      'error': str(e),
+                      'text_length': event.get('text_length', 0),
+                  }
 
   StoreResultsFunction:
     Type: AWS::Lambda::Function
@@ -457,7 +561,7 @@ Resources:
               "Choices": [
                 {
                   "Variable": "$.status",
-                  "StringEquals": "skipped",
+                  "IsPresent": true,
                   "Next": "SkippedEnd"
                 }
               ],

@@ -9,18 +9,19 @@ AI-powered legal document analysis using Amazon Bedrock's multi-agent collaborat
 ## Features
 
 - **Multi-Agent AI Analysis** — 5 specialized agents collaborate to analyze documents
-- **Semantic Document Chunking** — Large documents are split at meaningful boundaries (sections, clauses, paragraphs) for comprehensive analysis
+- **Semantic Document Chunking** — Large documents split at meaningful boundaries (sections, clauses, paragraphs)
 - **PII Detection** — Automatically identifies Social Security Numbers, emails, phone numbers, and addresses
 - **Cross-Chunk Context** — Maintains document-wide context across chunks so nothing is missed
 - **Real-Time Progress** — Live progress bar with elapsed time during chunked analysis
-- **Secure Authentication** — AWS Cognito with SRP protocol (passwords never transmitted in cleartext)
-- **Production-Ready** — Deployed on ECS Fargate with ALB, CI/CD via CodeCommit + CodeBuild
+- **Result Persistence** — Analysis results stored in DynamoDB + S3 from both the UI and batch pipeline
+- **Secure Authentication** — AWS Cognito with SRP protocol and optional MFA
+- **WAF Protection** — Rate limiting + AWS managed rule sets on the ALB
+- **HTTPS Ready** — Conditional TLS 1.3 listener (provide ACM certificate ARN)
+- **Production-Ready** — ECS Fargate, ALB, CI/CD, non-root container, least-privilege IAM
 
 ---
 
 ## Architecture: Multi-Agent Collaboration
-
-The system uses Amazon Bedrock's multi-agent collaboration pattern with one supervisor agent orchestrating four specialist agents:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -33,60 +34,49 @@ The system uses Amazon Bedrock's multi-agent collaboration pattern with one supe
 ┌─────────────────────────────────────────────────────────────────┐
 │              DOCUMENT CHUNKING PIPELINE                          │
 │                                                                 │
-│   Chunking_Engine → Context_Manager → Sequential Invocation     │
+│   Chunking Engine → Context Manager → Sequential Invocation     │
 │         ↓                                       ↓               │
 │   Split at semantic              Maintain doc-level context     │
 │   boundaries                     across all chunks              │
 │         ↓                                       ↓               │
-│                    Synthesis_Engine                              │
+│                    Synthesis Engine                              │
 │              (Combines all chunk results)                        │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
 │          ┌─────────────────────────────────────┐                │
 │          │   eDiscovery Collaborator Agent      │                │
 │          │         (SUPERVISOR)                 │                │
-│          │                                     │                │
-│          │  • Receives document chunks         │                │
-│          │  • Orchestrates analysis workflow    │                │
-│          │  • Synthesizes final report         │                │
 │          └────────────────┬────────────────────┘                │
 │                           │                                     │
 │              Step 1: Classify & Detect PII                      │
-│                           │                                     │
 │                           ▼                                     │
 │          ┌─────────────────────────────────────┐                │
 │          │     Classification Agent             │                │
-│          │                                     │                │
-│          │  • Document type (Contract/Email/   │                │
-│          │    Legal)                           │                │
-│          │  • PII detection (SSN, emails,     │                │
-│          │    phones, addresses)              │                │
-│          │  • Risk level assessment           │                │
 │          └────────────────┬────────────────────┘                │
 │                           │                                     │
 │              Step 2: Route to Specialist                        │
-│                           │                                     │
 │              ┌────────────┼────────────┐                        │
 │              ▼            ▼            ▼                        │
 │   ┌──────────────┐ ┌──────────┐ ┌──────────────┐              │
 │   │   Contract   │ │  Email   │ │    Legal     │              │
 │   │    Agent     │ │  Agent   │ │    Agent     │              │
-│   │              │ │          │ │              │              │
-│   │ • Parties    │ │ • Sender │ │ • Arguments  │              │
-│   │ • Key dates  │ │ • Topics │ │ • Citations  │              │
-│   │ • Financial  │ │ • Action │ │ • Precedents │              │
-│   │   terms      │ │   items  │ │ • Risk       │              │
-│   │ • Obligations│ │ • Tone   │ │   factors    │              │
-│   │ • Termination│ │ • Legal  │ │ • Privilege  │              │
-│   │   clauses    │ │   risk   │ │   indicators │              │
 │   └──────────────┘ └──────────┘ └──────────────┘              │
 │                                                                 │
 │                    AMAZON BEDROCK                                │
 │          Model: eu.amazon.nova-pro-v1:0                         │
 │          (EU Cross-Region Inference)                             │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    RESULT PERSISTENCE                            │
+│                                                                 │
+│   ┌──────────┐    ┌──────────┐                                 │
+│   │ DynamoDB │    │ S3 Output│                                 │
+│   │ (status) │    │  (JSON)  │                                 │
+│   └──────────┘    └──────────┘                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -94,191 +84,44 @@ The system uses Amazon Bedrock's multi-agent collaboration pattern with one supe
 
 | Agent | Role | Key Outputs |
 |-------|------|-------------|
-| **eDiscovery Collaborator** | Supervisor — orchestrates the full workflow | Executive summary, final risk assessment, recommended actions |
-| **Classification Agent** | Triage — identifies document type and flags PII | Document category, confidence score, PII inventory, risk level |
+| **eDiscovery Collaborator** | Supervisor — orchestrates the workflow | Executive summary, risk assessment, recommendations |
+| **Classification Agent** | Triage — identifies type and PII | Document category, confidence score, PII inventory, risk level |
 | **Contract Agent** | Specialist — extracts contract elements | Parties, dates, financials, obligations, termination clauses |
 | **Email Agent** | Specialist — analyzes communications | Participants, topics, action items, sentiment, legal implications |
 | **Legal Agent** | Specialist — evaluates legal documents | Arguments, citations, precedents, risk factors, privilege status |
 
-### How They Collaborate
-
-1. **Classification first** — Every document goes to the Classification Agent for triage
-2. **Smart routing** — Based on the classification result, the Supervisor routes to the appropriate specialist
-3. **Specialist analysis** — The domain expert performs deep analysis specific to that document type
-4. **Synthesis** — The Supervisor combines all findings into a unified report with deduplication
-
 ---
 
-## Document Chunking Pipeline
-
-For documents exceeding 10,000 characters, the system uses semantic chunking:
-
-```
-Document Text
-     │
-     ▼
-┌──────────────────┐     ┌─────────────────────┐
-│ Chunking_Engine  │────▶│ Semantic Boundaries │
-│                  │     │ • Section headings  │
-│ Split at meaning │     │ • Clause numbers    │
-│ boundaries       │     │ • Page breaks       │
-│                  │     │ • Paragraph breaks   │
-└──────────────────┘     └─────────────────────┘
-     │
-     ▼
-┌──────────────────┐     ┌─────────────────────┐
-│ Context_Manager  │────▶│ Per-Chunk Context   │
-│                  │     │ • Document summary  │
-│ Maintain context │     │ • Chunk position    │
-│ across chunks    │     │ • Defined terms     │
-│                  │     │ • Party names       │
-└──────────────────┘     └─────────────────────┘
-     │
-     ▼
-┌──────────────────┐     ┌─────────────────────┐
-│ Sequential Agent │────▶│ Per-Chunk Analysis  │
-│ Invocation       │     │ • Retry on throttle │
-│                  │     │ • Skip on failure   │
-│ With progress    │     │ • Progress updates  │
-└──────────────────┘     └─────────────────────┘
-     │
-     ▼
-┌──────────────────┐     ┌─────────────────────┐
-│ Synthesis_Engine │────▶│ Final Report        │
-│                  │     │ • Deduplicated      │
-│ Combine results  │     │ • Coverage gaps     │
-│ via Agent call   │     │ • Location refs     │
-└──────────────────┘     └─────────────────────┘
-```
-
-**Key parameters (configurable):**
-- Max chunk size: 8,000 chars (range: 1,000–50,000)
-- Min chunk size: 500 chars (range: 100–5,000)
-- Context window: 1,500 chars (range: 200–5,000)
-- Chunk overlap: 200 chars (range: 0–2,000)
-
----
-
-## Infrastructure
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     eu-north-1                          │
-│                                                         │
-│  ┌───────────┐    ┌───────────┐    ┌───────────────┐   │
-│  │    ALB    │───▶│  Fargate  │───▶│    Bedrock    │   │
-│  │  (HTTP)   │    │  (8501)   │    │   Agent API   │   │
-│  └───────────┘    └───────────┘    └───────────────┘   │
-│       ▲                │                                │
-│       │                ▼                                │
-│  ┌────┴────┐    ┌───────────┐    ┌───────────────┐     │
-│  │ Cognito │    │    ECR    │◀───│  CodeBuild    │     │
-│  │  (Auth) │    │  (Image)  │    │  (CI/CD)      │     │
-│  └─────────┘    └───────────┘    └───────┬───────┘     │
-│                                          │              │
-│                                   ┌──────┴──────┐      │
-│                                   │ CodeCommit  │      │
-│                                   │   (Repo)    │      │
-│                                   └─────────────┘      │
-└─────────────────────────────────────────────────────────┘
-```
-
-| Service | Resource | Purpose |
-|---------|----------|---------|
-| ECS Fargate | Cluster + Service | Runs the Streamlit container |
-| ALB | Application Load Balancer | Stable DNS, load balancing, sticky sessions |
-| ECR | Container Registry | Docker image storage |
-| CodeCommit | Source Repository | Git repository |
-| CodeBuild | Build Project | Automated Docker builds on push |
-| Cognito | User Pool | User authentication (SRP) |
-| Bedrock | Multi-agent with Nova Pro | AI inference (EU cross-region) |
-| CloudWatch | Log Group | Application logs (14-day retention) |
-
-### CloudFormation Stacks
-
-All infrastructure is managed by 3 CloudFormation stacks — delete a stack = full cleanup:
-
-| Stack | Template | Resources |
-|-------|----------|-----------|
-| **Agents** | `LEGAL-Documents-Collab-Amazon-Model.yaml` | 5 Bedrock Agents, Guardrail, IAM roles, Knowledge Base |
-| **Infrastructure** | `LEGAL-Documents-Infrastructure.yaml` | ECS, ALB, ECR, CodeBuild, CodeCommit, Cognito, Security Groups, Logs |
-| **Batch Pipeline** | `LEGAL-Documents-BatchPipeline.yaml` | S3 buckets, Step Functions, Lambda, DynamoDB, EventBridge |
-
-### Deploy (3 steps)
-
-```bash
-# Step 1: Deploy Bedrock Agents
-aws cloudformation create-stack --stack-name legal-doc-agents \
-  --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
-  --parameters ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
-  --capabilities CAPABILITY_IAM
-aws cloudformation wait stack-create-complete --stack-name legal-doc-agents
-
-# Get Agent IDs
-AGENT_ID=$(aws cloudformation describe-stacks --stack-name legal-doc-agents \
-  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentId`].OutputValue' --output text)
-ALIAS_ID=$(aws cloudformation describe-stacks --stack-name legal-doc-agents \
-  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentAliasId`].OutputValue' --output text)
-
-# Step 2: Deploy Infrastructure (ECS, ALB, Cognito, CI/CD)
-aws cloudformation create-stack --stack-name legal-doc-infra \
-  --template-body file://LEGAL-Documents-Infrastructure.yaml \
-  --parameters \
-    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=AgentId,ParameterValue=$AGENT_ID \
-    ParameterKey=AgentAliasId,ParameterValue=$ALIAS_ID \
-    ParameterKey=VpcId,ParameterValue=<YOUR_VPC_ID> \
-    ParameterKey=PublicSubnet1,ParameterValue=<SUBNET_AZ1> \
-    ParameterKey=PublicSubnet2,ParameterValue=<SUBNET_AZ2> \
-  --capabilities CAPABILITY_IAM
-aws cloudformation wait stack-create-complete --stack-name legal-doc-infra
-
-# Step 3 (Optional): Deploy Batch Pipeline
-aws cloudformation create-stack --stack-name legal-doc-batch \
-  --template-body file://LEGAL-Documents-BatchPipeline.yaml \
-  --parameters \
-    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=AgentId,ParameterValue=$AGENT_ID \
-    ParameterKey=AgentAliasId,ParameterValue=$ALIAS_ID \
-  --capabilities CAPABILITY_IAM
-```
-
-### Tear Down (full cleanup)
-
-```bash
-aws cloudformation delete-stack --stack-name legal-doc-batch
-aws cloudformation delete-stack --stack-name legal-doc-infra
-aws cloudformation delete-stack --stack-name legal-doc-agents
-```
-
----
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
-- AWS CLI configured: `aws configure` (set region to `eu-north-1`)
-- Docker installed (for local development)
 - Python 3.13+
+- AWS CLI configured (`aws configure` with region `eu-north-1`)
+- Docker (for containerized deployment)
+
+### Automated Deployment
+
+```bash
+chmod +x deploy-full.sh
+./deploy-full.sh --email your-admin@company.com
+```
+
+This single command deploys everything: Bedrock agents, ECS infrastructure, batch pipeline, and creates a Cognito user. A random password is generated automatically and displayed in the deployment summary.
 
 ### Local Development
 
 ```bash
-# Clone the repository
-git clone https://git-codecommit.<REGION>.amazonaws.com/v1/repos/legal-doc-analyzer
-cd legal-doc-analyzer
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Set environment variables
-export AWS_REGION=$(aws configure get region)
-export BEDROCK_AGENT_ID=<AGENT_ID>
-export BEDROCK_AGENT_ALIAS_ID=<AGENT_ALIAS_ID>
-export COGNITO_POOL_ID=<COGNITO_POOL_ID>
-export COGNITO_APP_CLIENT_ID=<COGNITO_CLIENT_ID>
-export COGNITO_APP_CLIENT_SECRET=<your-secret>
+# Configure environment (run deploy-full.sh first to generate .env)
+# Or copy and fill in manually:
+cp .env.example .env
 
 # Run the app
 streamlit run Analyze-LegalDocumentsUI.py
@@ -288,307 +131,242 @@ streamlit run Analyze-LegalDocumentsUI.py
 
 ```bash
 docker build -t legal-doc-analyzer .
-docker run -p 8501:8501 \
-  -e AWS_REGION=eu-central-1 \
-  -e BEDROCK_AGENT_ID=<AGENT_ID> \
-  -e BEDROCK_AGENT_ALIAS_ID=<AGENT_ALIAS_ID> \
-  -e AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
-  -e AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
-  legal-doc-analyzer
-```
-
-### Deploy to AWS
-
-```bash
-# See "CloudFormation Stacks" section above for full deployment commands
-# Or use the deploy script for manual Docker push:
-./deploy.sh
+docker run -p 8501:8501 --env-file .env legal-doc-analyzer
 ```
 
 ---
 
-## Project Structure
+## Environment Variables
 
+All configuration flows from CloudFormation outputs via environment variables. No values are hardcoded in source code.
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `AWS_REGION` | aws configure | AWS region (default: eu-north-1) |
+| `BEDROCK_AGENT_ID` | Agents stack output | Supervisor agent ID |
+| `BEDROCK_AGENT_ALIAS_ID` | Agents stack output | Supervisor agent alias |
+| `CLASSIFICATION_AGENT_ID` | Agents stack output | Classification agent (direct calls) |
+| `CLASSIFICATION_ALIAS_ID` | Agents stack output | Classification agent alias |
+| `CONTRACT_AGENT_ID` | Agents stack output | Contract agent (direct calls) |
+| `CONTRACT_ALIAS_ID` | Agents stack output | Contract agent alias |
+| `EMAIL_AGENT_ID` | Agents stack output | Email agent (direct calls) |
+| `EMAIL_ALIAS_ID` | Agents stack output | Email agent alias |
+| `LEGAL_AGENT_ID` | Agents stack output | Legal agent (direct calls) |
+| `LEGAL_ALIAS_ID` | Agents stack output | Legal agent alias |
+| `COGNITO_POOL_ID` | Infra stack output | Cognito User Pool ID |
+| `COGNITO_APP_CLIENT_ID` | Infra stack output | Cognito App Client ID |
+| `COGNITO_APP_CLIENT_SECRET` | Cognito API | App Client Secret |
+| `RESULTS_TABLE` | Batch stack output | DynamoDB table for results |
+| `OUTPUT_BUCKET` | Batch stack output | S3 bucket for analysis JSON |
+| `CHUNK_MAX_SIZE` | Optional (default: 8000) | Max chars per chunk |
+| `CHUNK_MIN_SIZE` | Optional (default: 500) | Min chars per chunk |
+| `CHUNK_CONTEXT_WINDOW` | Optional (default: 1500) | Context prepended to each chunk |
+| `CHUNK_OVERLAP` | Optional (default: 200) | Overlap between adjacent chunks |
+
+---
+
+## Infrastructure
+
+### CloudFormation Stacks
+
+| Stack | Template | Resources |
+|-------|----------|-----------|
+| **Agents** | `LEGAL-Documents-Collab-Amazon-Model.yaml` | 5 Bedrock Agents, Guardrail, IAM roles |
+| **Infrastructure** | `LEGAL-Documents-Infrastructure.yaml` | ECS, ALB, WAF, ECR, CodeBuild, Cognito |
+| **Batch Pipeline** | `LEGAL-Documents-BatchPipeline.yaml` | S3, Step Functions, Lambda, DynamoDB |
+
+### AWS Services Used
+
+| Service | Purpose |
+|---------|---------|
+| ECS Fargate | Runs Streamlit container (non-root, 512 CPU / 1024 MB) |
+| ALB | Load balancing, sticky sessions, HTTPS termination |
+| WAF v2 | Rate limiting (300 req/5min per IP), AWS managed rule sets |
+| ECR | Docker image registry (scan on push, 5-image lifecycle) |
+| Cognito | Authentication (SRP, optional TOTP MFA, 12-char passwords) |
+| Bedrock | Multi-agent AI inference (EU cross-region) |
+| CodeBuild + CodeCommit | CI/CD pipeline |
+| S3 | Document storage (input + output, AES-256 encrypted) |
+| Step Functions | Batch document processing orchestration |
+| Lambda | Text extraction + agent invocation + result storage |
+| DynamoDB | Processing status tracking (PAY_PER_REQUEST) |
+| CloudWatch | Application logs (90-day retention) |
+
+### Deploy Steps
+
+```bash
+# Option A: Fully automated (recommended)
+./deploy-full.sh --email admin@yourcompany.com
+
+# Option B: Manual stack-by-stack (see deploy-full.sh for full parameter list)
+aws cloudformation create-stack --stack-name legal-doc-agents ...
+aws cloudformation create-stack --stack-name legal-doc-infra ...
+aws cloudformation create-stack --stack-name legal-doc-batch ...
 ```
-├── Analyze-LegalDocumentsUI.py      # Streamlit application
-├── document_chunking/               # Chunking pipeline package
-│   ├── __init__.py
-│   ├── config.py                    # ChunkConfig with validation
-│   ├── models.py                    # Type definitions
-│   ├── chunking_engine.py           # Semantic boundary detection & splitting
-│   ├── context_manager.py           # Cross-chunk context management
-│   ├── synthesis_engine.py          # Result deduplication & report generation
-│   └── document_processor.py        # Pipeline orchestrator
-├── tests/                           # 189 unit tests
-│   ├── test_config.py
-│   ├── test_chunking_engine.py
-│   ├── test_context_manager.py
-│   ├── test_synthesis_engine.py
-│   └── test_document_processor.py
-├── LEGAL-Documents-Collab-Amazon-Model.yaml  # CloudFormation (Bedrock agents)
-├── LEGAL-Documents-Infrastructure.yaml      # CloudFormation (ECS, ALB, ECR, Cognito, CodeBuild)
-├── LEGAL-Documents-BatchPipeline.yaml       # CloudFormation (S3 + Step Functions batch)
-├── Dockerfile                       # Container build
-├── buildspec.yml                    # CodeBuild CI/CD
-├── taskdef.json                     # ECS task definition
-├── requirements.txt                 # Python dependencies
-└── deploy.sh                        # Manual deployment script
+
+### HTTPS Setup
+
+To enable HTTPS, provide an ACM certificate ARN:
+
+```bash
+./deploy-full.sh --email admin@company.com --cert-arn arn:aws:acm:eu-north-1:123456789:certificate/abc-123
+```
+
+Or pass `CertificateArn` when creating/updating the infra stack. When a certificate is provided:
+- HTTPS listener is created on port 443 (TLS 1.3 policy)
+- HTTP port 80 redirects to HTTPS (301)
+
+### Tear Down
+
+```bash
+./teardown.sh
+# Or manually:
+aws cloudformation delete-stack --stack-name legal-doc-batch
+aws cloudformation delete-stack --stack-name legal-doc-infra
+aws cloudformation delete-stack --stack-name legal-doc-agents
 ```
 
 ---
 
 ## Security
 
-- **Authentication:** AWS Cognito User Pool with SRP protocol
-- **Guardrails:** Bedrock Guardrail blocks harmful content, off-topic queries, and enforces PII anonymization in outputs
-- **Network:** Fargate tasks only accept traffic from ALB (no direct public access)
-- **IAM:** Least-privilege roles for ECS execution and Bedrock access
-- **Data:** EU cross-region inference keeps data within EU boundaries
-- **Secrets:** Agent IDs and Cognito credentials stored as environment variables (use Secrets Manager for production)
+### Authentication & Access Control
+
+| Control | Implementation |
+|---------|---------------|
+| User authentication | AWS Cognito (SRP protocol, passwords never in cleartext) |
+| MFA | Optional TOTP (software token) — users can enable in their account |
+| Password policy | 12 characters minimum, requires uppercase + lowercase + numbers + symbols |
+| Network isolation | ECS tasks only accept traffic from ALB security group |
+| WAF | Rate limiting (300 req/5min/IP) + CommonRuleSet + KnownBadInputs |
+| HTTPS | TLS 1.3 (conditional on certificate ARN) with HTTP→HTTPS redirect |
+
+### IAM Least-Privilege
+
+| Role | Permissions |
+|------|-------------|
+| ECS Task Role | `bedrock:InvokeAgent` + scoped DynamoDB/S3 access |
+| CodeBuild Role | Scoped ECR push + specific log group + CodeCommit pull |
+| Lambda Role | Scoped S3/DynamoDB + `bedrock:InvokeAgent` |
+| Bedrock Agent Roles | Scoped to specific inference profiles + guardrail |
+
+### Application Security
+
+| Measure | Detail |
+|---------|--------|
+| Container | Non-root user (`appuser`), minimal base image (`python:3.13-slim`) |
+| XSS protection | All user/agent content HTML-escaped before rendering |
+| XSRF protection | Enabled in Streamlit (`--server.enableXsrfProtection=true`) |
+| CORS | Enabled (`--server.enableCORS=true`) |
+| Prompt injection | Bedrock Guardrail with MEDIUM-strength prompt attack detection |
+| PII in outputs | SSN, credit cards, PINs, passwords auto-anonymized by guardrail |
+| Dependency pinning | All packages pinned to exact versions |
+| No hardcoded secrets | All IDs/credentials flow from CloudFormation via environment variables |
+| ALB header security | Invalid headers dropped (`drop_invalid_header_fields.enabled`) |
 
 ### Guardrail Configuration
 
-The `LegalDocGuardrail` is attached to all 5 agents and enforces:
+Attached to all 5 agents:
 
-| Policy | Behavior |
+| Policy | Strength |
 |--------|----------|
-| **Content filters** | Blocks sexual, violence, hate, insults, misconduct content (HIGH strength) |
-| **Prompt attack** | Blocks jailbreak and injection attempts |
-| **Topic: Legal Advice** | Denies responses that give specific legal opinions or recommendations |
-| **Topic: Off-Topic** | Denies non-document-analysis queries (poems, weather, coding, etc.) |
-| **PII: SSN** | Anonymizes Social Security Numbers in agent outputs |
-| **PII: Credit Cards** | Anonymizes credit/debit card numbers in outputs |
-| **PII: Passwords/PINs** | Anonymizes passwords and PINs in outputs |
-
-### Knowledge Base (Optional)
-
-Enable RAG by setting `KnowledgeBaseEnabled=true` during stack deployment:
-
-```bash
-aws cloudformation update-stack \
-  --stack-name AnalyzeDoc-bedrock-agents \
-  --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
-  --parameters \
-    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
-    ParameterKey=KnowledgeBaseEnabled,ParameterValue=true \
-  --capabilities CAPABILITY_IAM \
-  --region $(aws configure get region)
-```
-
-Then upload reference documents (legal precedents, company policies, contract templates) to the created S3 bucket:
-
-```bash
-# Get the bucket name from stack outputs
-BUCKET=$(aws cloudformation describe-stacks --stack-name AnalyzeDoc-bedrock-agents \
-  --query 'Stacks[0].Outputs[?OutputKey==`KnowledgeBaseBucketName`].OutputValue' --output text)
-
-# Upload reference documents
-aws s3 cp ./legal-references/ s3://${BUCKET}/ --recursive
-```
+| Sexual content | LOW (input + output) |
+| Violence | LOW (input + output) |
+| Hate speech | LOW (input + output) |
+| Prompt attack / jailbreak | MEDIUM (input) |
+| PII: SSN, credit cards, PINs, passwords | ANONYMIZE (output) |
 
 ---
 
-## Configuration
+## Document Chunking Pipeline
 
-All chunk processing parameters can be configured via:
-1. **Streamlit sidebar** (highest priority)
-2. **Environment variables** (`CHUNK_MAX_SIZE`, `CHUNK_MIN_SIZE`, `CHUNK_CONTEXT_WINDOW`, `CHUNK_OVERLAP`)
-3. **Default values** (lowest priority)
+For documents exceeding 10,000 characters:
 
----
+| Parameter | Default | Range | Configurable via |
+|-----------|---------|-------|-----------------|
+| Max chunk size | 8,000 chars | 1,000–50,000 | Sidebar / env var |
+| Min chunk size | 500 chars | 100–5,000 | Sidebar / env var |
+| Context window | 1,500 chars | 200–5,000 | Sidebar / env var |
+| Chunk overlap | 200 chars | 0–2,000 | Sidebar / env var |
 
-## Agent Configuration
-
-All agents are defined in `LEGAL-Documents-Collab-Amazon-Model.yaml` and deployed via CloudFormation. Here's how each is configured:
-
-### Collaborator Agent (Supervisor) — 2–5s processing
-
-| Property | Value |
-|----------|-------|
-| **Resource** | `CollabBedrockAgent` |
-| **Role** | Central orchestrator and workflow manager |
-| **Config** | `AgentCollaboration: "SUPERVISOR"` |
-| **Connects to** | All 4 specialists via `AgentCollaborators` list |
-| **Outputs** | Document routing decisions, consolidated final report |
-
-The supervisor's `Instruction` defines the full workflow: classify first → route to specialist → synthesize results.
-
-### Classification Agent — 5–10s processing
-
-| Property | Value |
-|----------|-------|
-| **Resource** | `ClassificationAgent` |
-| **Role** | Initial document triage and sensitivity detection |
-| **Instruction** | Classify into Contract/Email/Legal + detect PII |
-| **Outputs** | Document type, confidence score (0-100), PII inventory (SSN, emails, phones, addresses), risk level (HIGH/MEDIUM/LOW) |
-
-### Email Analysis Agent — 10–20s processing
-
-| Property | Value |
-|----------|-------|
-| **Resource** | `EmailAgent` |
-| **Role** | Communication pattern analysis |
-| **Instruction** | Analyze sender/recipients, topics, action items, sentiment, legal implications |
-| **Outputs** | Participant maps, conversation threads, action items, sentiment score, legal risk flags |
-
-### Legal Document Agent — 15–30s processing
-
-| Property | Value |
-|----------|-------|
-| **Resource** | `LegalAgent` |
-| **Role** | Court filing and legal brief analysis |
-| **Instruction** | Analyze legal arguments, citations, precedents, risk factors, privilege indicators |
-| **Outputs** | Case citations, legal arguments, procedural dates, risk factors (high/medium/low), privilege status |
-
-### Contract Analysis Agent — 20–40s processing
-
-| Property | Value |
-|----------|-------|
-| **Resource** | `ContractAgent` |
-| **Role** | Contract terms extraction and risk assessment |
-| **Instruction** | Analyze parties, key dates, financial terms, obligations, termination clauses |
-| **Outputs** | Party details, dates, payment schedules, obligations per party, termination conditions, risk scores |
-
-### Modifying Agent Behavior
-
-Edit the `Instruction` field in the YAML and redeploy:
-
-```bash
-# Edit the agent instructions
-vim LEGAL-Documents-Collab-Amazon-Model.yaml
-
-# Update the deployed stack
-aws cloudformation update-stack \
-  --stack-name AnalyzeDoc-bedrock-agents \
-  --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
-  --parameters ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=FoundationModelId,ParameterValue=eu.amazon.nova-pro-v1:0 \
-  --capabilities CAPABILITY_IAM \
-  --region $(aws configure get region)
-```
-
-### Tuning Processing Times
-
-| Factor | Where to configure | Impact |
-|--------|-------------------|--------|
-| Model choice | `FoundationModelId` parameter | Nova Lite = faster; Nova Pro = more thorough |
-| Instruction length | Agent `Instruction` field | Shorter = faster response |
-| Input size | Chunk size settings (sidebar/env vars) | Smaller chunks = faster per-chunk processing |
-| Session timeout | `IdleSessionTTLInSeconds` per agent | Keepalive for multi-turn (default 30 min) |
-
-### Adding a New Specialist Agent
-
-1. Add the agent + alias resource in the YAML:
-```yaml
-NewSpecialistAgent:
-  Type: AWS::Bedrock::Agent
-  Properties:
-    AgentName: !Sub "${EnvironmentName}-New-Specialist"
-    Description: Agent for analyzing [your domain]
-    AutoPrepare: true
-    Instruction: |
-      Your analysis instructions here...
-    AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
-    IdleSessionTTLInSeconds: 1800
-    FoundationModel: !Ref FoundationModelId
-
-NewSpecialistAgentAlias:
-  Type: AWS::Bedrock::AgentAlias
-  Properties:
-    AgentAliasName: !Sub "${EnvironmentName}-NewSpecialist"
-    AgentId: !Ref NewSpecialistAgent
-```
-
-2. Add it to the Supervisor's `AgentCollaborators` list with a `CollaborationInstruction`
-3. Add its alias ARN to the `CollabAgentPolicy` IAM policy resources
-4. Update the Supervisor's `Instruction` to include routing logic for the new document type
-5. Update the Classification Agent's categories to include the new type
-6. Redeploy the stack
+Configuration precedence: **Sidebar** > **Environment variables** > **Dataclass defaults**
 
 ---
 
-## Batch Processing Pipeline (S3 + Step Functions)
+## Batch Processing Pipeline
 
-For processing hundreds of documents at scale without the Streamlit UI:
-
-```
-┌──────────────┐     ┌─────────────┐     ┌───────────────────────────────┐
-│  S3 Bucket   │────▶│ EventBridge │────▶│      Step Functions           │
-│  /upload/    │     │  (trigger)  │     │                               │
-│              │     └─────────────┘     │  ┌─────────┐  ┌───────────┐  │
-│  Drop docs   │                         │  │Extract  │─▶│  Analyze  │  │
-│  here        │                         │  │  Text   │  │ (Bedrock) │  │
-└──────────────┘                         │  └─────────┘  └─────┬─────┘  │
-                                         │                     │        │
-                                         │              ┌──────▼──────┐ │
-                                         │              │   Store     │ │
-                                         │              │  Results    │ │
-                                         │              └─────────────┘ │
-                                         └───────────────────────────────┘
-                                                        │
-                                         ┌──────────────┼──────────────┐
-                                         ▼              ▼              ▼
-                                   ┌──────────┐  ┌──────────┐  ┌──────────┐
-                                   │ S3 Output│  │ DynamoDB  │  │CloudWatch│
-                                   │ (JSON)   │  │ (status)  │  │ (logs)   │
-                                   └──────────┘  └──────────┘  └──────────┘
-```
-
-### Deploy the Batch Pipeline
+For processing documents at scale without the UI:
 
 ```bash
-aws cloudformation create-stack \
-  --stack-name AnalyzeDoc-batch-pipeline \
-  --template-body file://LEGAL-Documents-BatchPipeline.yaml \
-  --parameters \
-    ParameterKey=EnvironmentName,ParameterValue=LegalDocSetup \
-    ParameterKey=AgentId,ParameterValue=<AGENT_ID> \
-    ParameterKey=AgentAliasId,ParameterValue=<AGENT_ALIAS_ID> \
-  --capabilities CAPABILITY_IAM \
-  --region $(aws configure get region)
+# Upload documents to trigger processing
+aws s3 cp contract.pdf s3://<ENV>-doc-input-<ACCOUNT>-<REGION>/upload/
+
+# Bulk upload
+aws s3 cp ./legal-docs/ s3://<ENV>-doc-input-<ACCOUNT>-<REGION>/upload/ --recursive
+
+# Check status
+aws dynamodb scan --table-name <ENV>-doc-results --filter-expression "#s = :v" \
+  --expression-attribute-names '{"#s":"status"}' \
+  --expression-attribute-values '{":v":{"S":"COMPLETED"}}'
 ```
 
-### Usage
+**Flow:** S3 upload → EventBridge → Step Functions → (Extract Text → Analyze via Bedrock → Store Results)
+
+**Supported formats:** PDF, DOCX, TXT
+
+---
+
+## Result Persistence
+
+Both the Streamlit app and the batch pipeline write results to the same DynamoDB table and S3 bucket:
+
+| Source | DynamoDB Record | S3 Object |
+|--------|----------------|-----------|
+| Streamlit app | `source: "streamlit_app"`, includes user info | `results/YYYY/MM/DD/<doc_id>/<filename>.json` |
+| Batch pipeline | `source: "batch_pipeline"` | Same path pattern |
+
+This gives you a unified view of all analyzed documents regardless of entry point.
+
+---
+
+## Running Tests
 
 ```bash
-# Upload a single document
-aws s3 cp contract.pdf s3://LegalDocSetup-doc-input-<ACCOUNT_ID>-<REGION>/upload/
-
-# Upload an entire folder of documents
-aws s3 cp ./legal-docs/ s3://LegalDocSetup-doc-input-<ACCOUNT_ID>-<REGION>/upload/ --recursive
-
-# Check processing status
-aws dynamodb scan --table-name LegalDocSetup-doc-results --region $(aws configure get region)
-
-# Get results for a specific document
-aws s3 ls s3://LegalDocSetup-doc-output-<ACCOUNT_ID>-<REGION>/results/ --recursive
+pip install pytest
+pytest
 ```
 
-### How It Works
+**189 unit tests** run in < 0.2 seconds. All AWS calls are mocked — no cloud access needed.
 
-1. **Drop documents** into the S3 input bucket under the `upload/` prefix
-2. **EventBridge** detects the upload and triggers the Step Functions workflow
-3. **Extract Text** Lambda reads the document (uses Textract for PDFs)
-4. **Analyze Document** Lambda invokes the Bedrock Collaborator Agent (with retry logic)
-5. **Store Results** Lambda saves the analysis JSON to the output bucket and updates DynamoDB
-6. **DynamoDB** tracks status (PROCESSING → ANALYZING → COMPLETED/FAILED) for dashboarding
+---
 
-### Supported Formats
+## Project Structure
 
-| Format | Extraction Method |
-|--------|-------------------|
-| PDF | Amazon Textract (OCR + text) |
-| TXT | Direct read from S3 |
-| DOCX | Basic text extraction |
-
-### Concurrency & Throttling
-
-- Step Functions processes one document per execution (no internal parallelism)
-- EventBridge triggers a separate execution per file upload (concurrent by default)
-- Built-in retry with exponential backoff for Bedrock throttling (10s → 20s → 40s)
-- Lifecycle policy moves input files to Glacier after 30 days
-- DynamoDB uses PAY_PER_REQUEST billing (scales automatically)
+```
+├── Analyze-LegalDocumentsUI.py          # Streamlit application (main entry point)
+├── document_chunking/                   # Core chunking pipeline package
+│   ├── __init__.py                      # Public API exports
+│   ├── config.py                        # ChunkConfig dataclass with validation
+│   ├── models.py                        # Data models (Chunk, Finding, SynthesisReport)
+│   ├── chunking_engine.py              # Semantic boundary detection & text splitting
+│   ├── context_manager.py             # Cross-chunk context propagation
+│   ├── synthesis_engine.py            # Result deduplication & final report
+│   └── document_processor.py          # Pipeline orchestrator
+├── legal-mcp-server/                   # MCP server for IDE integration
+│   ├── server.py                       # FastMCP tool exposing Bedrock agents
+│   ├── requirements.txt               # MCP server dependencies
+│   └── README.md                       # MCP server usage
+├── tests/                              # 189 unit tests (pytest)
+├── LEGAL-Documents-Collab-Amazon-Model.yaml   # CloudFormation: Bedrock agents
+├── LEGAL-Documents-Infrastructure.yaml        # CloudFormation: ECS/ALB/WAF/Cognito
+├── LEGAL-Documents-BatchPipeline.yaml         # CloudFormation: S3/Step Functions/Lambda
+├── Dockerfile                          # Non-root Python 3.13-slim container
+├── buildspec.yml                       # CodeBuild CI/CD spec
+├── requirements.txt                    # Pinned Python dependencies
+├── deploy-full.sh                      # Automated deployment (all stacks)
+├── teardown.sh                         # Stack teardown
+└── .env.example                        # Environment variable template
+```
 
 ---
 

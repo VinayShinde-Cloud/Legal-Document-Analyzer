@@ -103,3 +103,24 @@ sed -e "s|PLACEHOLDER_REGION|$REGION|g" \
 aws ecs register-task-definition --cli-input-json file://taskdef-resolved.json
 
 # Create cluster + service (see deploy.sh for full setup)
+  source .venv/bin/activate
+  python legal-mcp-server/server.py --http --port 8080
+
+# 1. Initialize (get session)
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"client","version":"1.0"},"capabilities":{}}}'
+
+# 2. Call analyze_document (include Mcp-Session-Id from step 1 response headers)
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Session-Id: <session-id>" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"analyze_document","arguments":{"document_text":"Your document text here..."}}}'
+
+{
+  "legal-doc-analyzer": {
+    "url": "http://localhost:8080/mcp"
+  }
+}

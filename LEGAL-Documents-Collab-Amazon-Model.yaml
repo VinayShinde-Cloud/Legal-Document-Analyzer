@@ -8,12 +8,12 @@ Parameters:
     Description: Environment name for resource naming and tagging
   FoundationModelId:
     Type: String
-    Default: "eu.amazon.nova-pro-v1:0"
+    Default: "amazon.nova-lite-v1:0"
     AllowedValues:
-      - "eu.amazon.nova-pro-v1:0"
-      - "eu.amazon.nova-lite-v1:0"
-      - "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
-    Description: Foundation model inference profile for all agents (EU cross-region)
+      - "amazon.nova-pro-v1:0"
+      - "amazon.nova-lite-v1:0"
+      - "anthropic.claude-haiku-4-5-20251001-v1:0"
+    Description: Foundation model ID for all agents (direct invoke in deployment region)
   KnowledgeBaseEnabled:
     Type: String
     Default: "false"
@@ -31,45 +31,29 @@ Resources:
     Type: AWS::Bedrock::Guardrail
     Properties:
       Name: !Sub "${EnvironmentName}-LegalDocGuardrail"
-      Description: "Guardrail for legal document analysis agents - blocks harmful content, enforces topic boundaries, and manages PII handling"
-      BlockedInputMessaging: "I cannot process this request. Please provide a valid legal document, contract, email, or professional communication for analysis."
-      BlockedOutputsMessaging: "I cannot provide this response as it may contain inappropriate content. Please rephrase your query about the document."
+      Description: "Lenient guardrail - only blocks extreme content and anonymizes PII. Designed not to interfere with legal document analysis."
+      BlockedInputMessaging: "This request contains content that cannot be processed. Please submit a legal document for analysis."
+      BlockedOutputsMessaging: "The response was filtered. Please try rephrasing your request."
       ContentPolicyConfig:
         FiltersConfig:
           - Type: SEXUAL
-            InputStrength: HIGH
-            OutputStrength: HIGH
+            InputStrength: LOW
+            OutputStrength: LOW
           - Type: VIOLENCE
-            InputStrength: HIGH
-            OutputStrength: HIGH
+            InputStrength: LOW
+            OutputStrength: LOW
           - Type: HATE
-            InputStrength: HIGH
-            OutputStrength: HIGH
+            InputStrength: LOW
+            OutputStrength: LOW
           - Type: INSULTS
-            InputStrength: HIGH
-            OutputStrength: HIGH
-          - Type: MISCONDUCT
-            InputStrength: HIGH
-            OutputStrength: HIGH
-          - Type: PROMPT_ATTACK
-            InputStrength: HIGH
+            InputStrength: NONE
             OutputStrength: NONE
-      TopicPolicyConfig:
-        TopicsConfig:
-          - Name: "LegalAdvice"
-            Definition: "Providing specific legal advice, legal opinions, or recommendations that could be construed as practicing law without a license"
-            Examples:
-              - "You should sue them for breach of contract"
-              - "Based on this document, you will win your case"
-              - "I advise you to terminate the agreement immediately"
-            Type: DENY
-          - Name: "OffTopic"
-            Definition: "Questions unrelated to document analysis, legal document processing, or professional communication analysis"
-            Examples:
-              - "Write me a poem about cats"
-              - "What is the weather today"
-              - "Help me write code for a website"
-            Type: DENY
+          - Type: MISCONDUCT
+            InputStrength: NONE
+            OutputStrength: NONE
+          - Type: PROMPT_ATTACK
+            InputStrength: MEDIUM
+            OutputStrength: NONE
       SensitiveInformationPolicyConfig:
         PiiEntitiesConfig:
           - Type: US_SOCIAL_SECURITY_NUMBER
@@ -140,36 +124,18 @@ Resources:
   BedrockAgentPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: "Policy for Bedrock Agents to invoke foundation models via EU cross-region inference"
+      Description: "Policy for Bedrock Agents to invoke foundation models directly in the deployment region"
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: AmazonBedrockAgentInferenceProfilesCrossRegionPolicyProd
+          - Sid: AmazonBedrockAgentModelInvocation
             Effect: Allow
             Action:
               - bedrock:InvokeModel
               - bedrock:InvokeModelWithResponseStream
-              - bedrock:GetInferenceProfile
               - bedrock:GetFoundationModel
             Resource:
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${FoundationModelId}"
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:application-inference-profile/*"
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*"
-          - Sid: AmazonBedrockAgentCrossRegionModelInvocation
-            Effect: Allow
-            Action:
-              - bedrock:InvokeModel
-              - bedrock:InvokeModelWithResponseStream
-            Resource:
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-2::foundation-model/amazon.nova-pro-v1:0"
-            Condition:
-              StringLike:
-                "bedrock:InferenceProfileArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:*:inference-profile/${FoundationModelId}"
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${FoundationModelId}"
           - Sid: GuardrailAccess
             Effect: Allow
             Action:
@@ -466,33 +432,14 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: "AmazonBedrockAgentBedrockFoundationModelPolicyProd"
+          - Sid: "AmazonBedrockAgentModelInvocation"
             Effect: "Allow"
             Action:
               - "bedrock:InvokeModel"
               - "bedrock:InvokeModelWithResponseStream"
-              - "bedrock:GetInferenceProfile"
               - "bedrock:GetFoundationModel"
             Resource:
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${FoundationModelId}"
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:application-inference-profile/*"
-              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/*"
-          - Sid: "AmazonBedrockAgentCrossRegionModelInvocation"
-            Effect: "Allow"
-            Action:
-              - "bedrock:InvokeModel"
-              - "bedrock:InvokeModelWithResponseStream"
-            Resource:
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-1::foundation-model/amazon.nova-pro-v1:0"
-              - !Sub "arn:${AWS::Partition}:bedrock:eu-south-2::foundation-model/amazon.nova-pro-v1:0"
-            Condition:
-              StringLike:
-                "bedrock:InferenceProfileArn": !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:*:inference-profile/${FoundationModelId}"
-
+              - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${FoundationModelId}"
           - Sid: "AmazonBedrockAgentsMultiAgentsPoliciesProd"
             Effect: "Allow"
             Action:
@@ -503,6 +450,12 @@ Resources:
               - !GetAtt EmailAgentAlias.AgentAliasArn
               - !GetAtt ContractAgentAlias.AgentAliasArn
               - !GetAtt ClassificationAgentAlias.AgentAliasArn
+          - Sid: "GuardrailAccessCollab"
+            Effect: "Allow"
+            Action:
+              - "bedrock:ApplyGuardrail"
+            Resource:
+              - !GetAtt LegalDocGuardrail.GuardrailArn
 
   # IAM Role for the collaborator agent
   BedrockCollabAgentExecutionRole:
@@ -748,6 +701,54 @@ Outputs:
     Value: !GetAtt CollabBedrockAgentAlias.AgentAliasId
     Export:
       Name: !Sub "${EnvironmentName}-CollabBedrockAgentAliasId"
+
+  ClassificationAgentId:
+    Description: Classification Agent ID
+    Value: !GetAtt ClassificationAgent.AgentId
+    Export:
+      Name: !Sub "${EnvironmentName}-ClassificationAgentId"
+
+  ClassificationAgentAliasId:
+    Description: Classification Agent Alias ID
+    Value: !GetAtt ClassificationAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub "${EnvironmentName}-ClassificationAgentAliasId"
+
+  ContractAgentId:
+    Description: Contract Agent ID
+    Value: !GetAtt ContractAgent.AgentId
+    Export:
+      Name: !Sub "${EnvironmentName}-ContractAgentId"
+
+  ContractAgentAliasId:
+    Description: Contract Agent Alias ID
+    Value: !GetAtt ContractAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub "${EnvironmentName}-ContractAgentAliasId"
+
+  EmailAgentId:
+    Description: Email Agent ID
+    Value: !GetAtt EmailAgent.AgentId
+    Export:
+      Name: !Sub "${EnvironmentName}-EmailAgentId"
+
+  EmailAgentAliasId:
+    Description: Email Agent Alias ID
+    Value: !GetAtt EmailAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub "${EnvironmentName}-EmailAgentAliasId"
+
+  LegalAgentId:
+    Description: Legal Agent ID
+    Value: !GetAtt LegalAgent.AgentId
+    Export:
+      Name: !Sub "${EnvironmentName}-LegalAgentId"
+
+  LegalAgentAliasId:
+    Description: Legal Agent Alias ID
+    Value: !GetAtt LegalAgentAlias.AgentAliasId
+    Export:
+      Name: !Sub "${EnvironmentName}-LegalAgentAliasId"
 
   GuardrailId:
     Description: Bedrock Guardrail ID

@@ -245,14 +245,14 @@ class DocumentProcessor:
     def _invoke_with_retry(
         self, input_text: str, chunk_position: int
     ) -> str | None:
-        """Invoke agent with exponential backoff retry for throttling errors.
+        """Invoke agent with exponential backoff retry for transient errors.
 
         Retry strategy:
         - Initial backoff: 10 seconds
         - Doubles per attempt: 10s, 20s, 40s
         - Max 3 retry attempts
-        - Only throttling errors trigger retries
-        - Non-throttling errors and timeouts cause immediate failure
+        - Retryable errors (throttling, model timeouts, dependency failures) trigger retries
+        - Non-retryable errors cause immediate failure
 
         Args:
             input_text: The prompt text to send to the agent.
@@ -274,29 +274,42 @@ class DocumentProcessor:
                 return None
             except Exception as e:
                 error_message = str(e)
-                if self._is_throttling_error(error_message):
-                    # Throttling error - retry with backoff
+                if self._is_retryable_error(error_message):
+                    # Retryable error - retry with backoff
                     if attempt < max_retries - 1:
                         time.sleep(backoff)
                         backoff *= 2
                     # If last attempt, fall through to return None
                 else:
-                    # Non-throttling error - skip immediately
+                    # Non-retryable error - skip immediately
                     return None
 
         return None
 
-    def _is_throttling_error(self, error_message: str) -> bool:
-        """Determine if an error message indicates a throttling error.
+    def _is_retryable_error(self, error_message: str) -> bool:
+        """Determine if an error message indicates a retryable error.
+
+        Retryable errors include throttling, model timeouts, and transient
+        dependency failures (common with EU cross-region inference).
 
         Args:
             error_message: The exception message string.
 
         Returns:
-            True if the error is a throttling error, False otherwise.
+            True if the error is retryable, False otherwise.
         """
         lower_msg = error_message.lower()
-        return "throttling" in lower_msg or "throttlingexception" in lower_msg
+        retryable_patterns = [
+            "throttling",
+            "throttlingexception",
+            "dependencyfailedexception",
+            "model timeout",
+            "timeout",
+            "try the request again",
+            "service unavailable",
+            "internal server error",
+        ]
+        return any(pattern in lower_msg for pattern in retryable_patterns)
 
     def _estimate_remaining_time(
         self, elapsed: float, completed: int, total: int

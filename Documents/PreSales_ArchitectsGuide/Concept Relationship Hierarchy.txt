@@ -1,0 +1,15 @@
+Artificial Intelligence
+│
+├── Machine Learning (Pattern learning & prediction)
+│   │
+│   └── Generative AI (Content creation subset)
+│       │
+│       └── Foundation Models / LLMs
+│           │
+│           └── AI Agents (Task-executing systems using LLMs + tools)
+│               │
+│               ├── Sub Agents (Specialized child agents)
+│               │
+│               └── Multi-Agent Systems (Collaborating agent networks)
+│                   │
+│                   └── Agentic AI (Autonomous, goal-driven orchestration framework)
