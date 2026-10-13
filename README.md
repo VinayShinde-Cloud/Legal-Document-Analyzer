@@ -33,6 +33,8 @@ An enterprise-grade, multi-agent document analysis and conversational discovery 
 
 ## System Architecture
 
+![System Architecture](assets/architecture_diagram.jpg)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                             CLIENT INTERFACE                                │
