@@ -10,6 +10,13 @@ import io
 import os
 import html as html_lib
 
+# Load environment variables from .env
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except ImportError:
+    pass
+
 # Additional imports for file processing
 import PyPDF2
 import docx
@@ -407,6 +414,25 @@ def agent_invoker_for_processor(input_text: str) -> str | None:
     """
     engine = bedrock_agents.get_agent_engine(st.session_state.aws_region)
     return engine.invoke(input_text)
+
+
+def save_document_to_input_bucket(uploaded_file) -> str | None:
+    """Save the uploaded raw document into the S3 input drop zone bucket."""
+    input_bucket = os.environ.get("INPUT_BUCKET", "")
+    if not input_bucket:
+        return None
+    try:
+        s3_client = boto3.client("s3", region_name=st.session_state.get("aws_region", "us-east-1"))
+        key = f"upload/{uploaded_file.name}"
+        s3_client.put_object(
+            Bucket=input_bucket,
+            Key=key,
+            Body=uploaded_file.getvalue(),
+        )
+        return key
+    except Exception as e:
+        print(f"Warning: could not save to S3 input bucket: {e}")
+        return None
 
 
 def persist_analysis_result(filename: str, analysis_content, processing_result: dict) -> str | None:
@@ -1042,6 +1068,9 @@ else:
                             st.session_state.document_uploaded = True
                             st.session_state.analysis_time = datetime.now()
 
+                            # Upload raw document to S3 input drop zone
+                            save_document_to_input_bucket(uploaded_file)
+
                             # Build configuration with precedence
                             config = build_chunk_config()
                             validation_errors = config.validate()
@@ -1099,7 +1128,7 @@ else:
                                 processing_result=st.session_state.processing_result,
                             )
                             if doc_id:
-                                st.toast(f"✅ Results persisted (ID: {doc_id[:8]}...)", icon="💾")
+                                st.session_state.persisted_doc_id = doc_id
 
                             # Force a rerun to show the chat interface
                             st.rerun()
@@ -1139,6 +1168,11 @@ else:
                         f'</div>',
                         unsafe_allow_html=True
                     )
+
+            if st.session_state.get("persisted_doc_id"):
+                out_bucket = os.environ.get("OUTPUT_BUCKET", "")
+                table_name = os.environ.get("RESULTS_TABLE", "")
+                st.caption(f"💾 **Cloud Persistence:** Saved to S3 (`s3://{out_bucket}/`) & DynamoDB (`{table_name}`) — Record ID: `{st.session_state.persisted_doc_id[:8]}...`")
 
             # Create a container for chat messages
             chat_container = st.container()
