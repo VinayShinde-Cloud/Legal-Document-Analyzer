@@ -2,14 +2,14 @@
 
 # ⚖️ Enterprise Multi-Agent Legal Document Intelligence Platform
 
-### Production-Grade Document Triage, PII Redaction, Risk Auditing & Conversational Intelligence
+### Automated Document Triage, PII Redaction, Risk Auditing & Stateful Conversational Discovery
 
-[![Python Version](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Amazon Bedrock](https://img.shields.io/badge/AWS-Amazon%20Bedrock-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
-[![Foundation Models](https://img.shields.io/badge/Models-Amazon%20Nova%20Lite%20%7C%20Nova%20Pro-8A2BE2?style=for-the-badge)](https://aws.amazon.com/ai/generative-ai/nova/)
-[![Frontend](https://img.shields.io/badge/UI-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Tests](https://img.shields.io/badge/Tests-189%20Passed-success?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+[![Python Version](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Amazon Bedrock](https://img.shields.io/badge/AWS-Amazon%20Bedrock-FF9900?style=flat-square&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
+[![Models](https://img.shields.io/badge/Models-Amazon%20Nova%20Lite%20%7C%20Nova%20Pro-8A2BE2?style=flat-square)](https://aws.amazon.com/ai/generative-ai/nova/)
+[![UI](https://img.shields.io/badge/Frontend-Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Unit Tests](https://img.shields.io/badge/Tests-189%20Passed-success?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 <br/>
 
@@ -29,20 +29,16 @@
 - [Tech Stack](#-tech-stack)
 - [Repository Structure](#-repository-structure)
 - [Getting Started](#-getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Local Installation](#local-installation)
-  - [Environment Configuration](#environment-configuration)
-  - [Running the Streamlit UI](#running-the-streamlit-ui)
 - [Batch Processing Pipeline](#-batch-processing-pipeline)
 - [Testing & Quality Assurance](#-testing--quality-assurance)
-- [Production AWS Cloud Deployment](#-production-aws-cloud-deployment)
+- [Production Deployment](#-production-deployment)
 - [License & Attribution](#-license--attribution)
 
 ---
 
 ## 🌟 Executive Overview
 
-The **Enterprise Multi-Agent Legal Document Intelligence Platform** is a scalable, cloud-native generative AI system designed to automate complex legal document analysis, contract intelligence, sensitive PII sanitization, and compliance risk evaluation. 
+The **Enterprise Multi-Agent Legal Document Intelligence Platform** is a cloud-native generative AI system designed to automate complex legal document analysis, contract intelligence, sensitive PII sanitization, and compliance risk evaluation. 
 
 Built on **Amazon Bedrock**, **Amazon Nova models**, and **AgentCore Runtime**, the platform replaces conventional single-prompt monolithic pipelines with a **hierarchical multi-agent network**. A master supervisor agent orchestrates specialized domain agents (Contracts, Litigation/Legal, Email Correspondence, and Classification/PII) to perform deep semantic decomposition on documents up to 25MB (100K+ tokens) with persistent, multi-turn conversational discovery.
 
@@ -50,58 +46,17 @@ Built on **Amazon Bedrock**, **Amazon Nova models**, and **AgentCore Runtime**, 
 
 ## 🏛️ System Architecture
 
-### Official AWS Architecture Schematic
 <div align="center">
-  <img src="assets/aws_architecture_diagram.jpg" alt="AWS Cloud Architecture Diagram" width="95%" />
+  <img src="assets/aws_architecture_diagram.jpg" alt="Official AWS Cloud Architecture Diagram" width="100%" />
 </div>
 
+<details>
+<summary><b>📐 View 3D Isometric Topology</b></summary>
 <br/>
-
-### Isometric 3D Deployment Topology
 <div align="center">
-  <img src="assets/aws_isometric_architecture.jpg" alt="AWS 3D Isometric Architecture Diagram" width="95%" />
+  <img src="assets/aws_isometric_architecture.jpg" alt="AWS 3D Isometric Architecture Diagram" width="100%" />
 </div>
-
-<br/>
-
-### End-to-End Data Flow
-
-```
-[ User / Legal Analyst ]
-          │  (HTTPS / TLS 1.3)
-          ▼
-   [ AWS WAF ] ────► [ Amazon Cognito (SRP Auth) ]
-          │
-          ▼
-[ Application Load Balancer ]
-          │
-          ▼
-[ Amazon ECS Fargate Container ] (Streamlit Web UI)
-          │
-          ├──► [ S3 Input Drop Zone ] ──► (Raw Document Vault)
-          │
-          ├──► [ Semantic Chunking Engine ] (Clause & Section Splitter)
-          │            │
-          │            ▼
-          │   [ Rolling Context Manager ] (Cross-Chunk State Propagation)
-          │            │
-          │            ▼
-          └──► [ Amazon Bedrock Converse Multi-Agent Engine ]
-                       │
-                       ├─► Step 1: Triage & PII Redaction ──► [ Nova Lite Agent ]
-                       │
-                       ├─► Step 2: Routed Specialist Analysis:
-                       │     ├── [ Contract Specialist Agent ] (Nova Pro)
-                       │     ├── [ Legal / Precedent Agent ]   (Nova Pro)
-                       │     └── [ Email / Comms Agent ]       (Nova Pro)
-                       │
-                       └─► Step 3: Synthesis & Audit ────────► [ Supervisor Agent ] (Nova Pro)
-                                      │
-                                      ▼
-                        [ Enterprise Cloud Persistence ]
-                                      ├──► [ Amazon S3 Output ] (Full Analysis JSON)
-                                      └──► [ Amazon DynamoDB ]  (Audit Metadata Index)
-```
+</details>
 
 ---
 
@@ -121,23 +76,10 @@ The architecture leverages a **tiered specialist model** to maximize reasoning d
 
 ## ⚡ Key Engineering Innovations
 
-### 1. Stateful Multi-Turn Conversation Memory
-* Integrated directly with the **Amazon Bedrock Converse API**.
-* Session chat history is dynamically aggregated across multi-turn exchanges, maintaining document context and past answers so users can ask contextual follow-up questions (*"What was the termination liability mentioned in clause 4 above?"*).
-
-### 2. Tiered Inference Routing
-* Employs **Amazon Nova Lite** ($0.06 / 1k tokens) for first-pass triage and PII discovery.
-* Routes intensive reasoning exclusively to **Amazon Nova Pro** ($0.80 / 1k tokens).
-* Achieves significant token cost reduction compared to uniform frontier-model routing.
-
-### 3. Semantic Chunking & Map-Reduce Synthesis
-* Splits massive legal documents (up to 25MB / 100K+ tokens) along natural grammatical and legal boundaries (articles, sections, clauses).
-* Features a **Rolling Context Window** that carries forward cross-chunk context to eliminate hallucination across chunk boundaries.
-* Map-reduce aggregation deduplicates recurring findings into a single unified executive report.
-
-### 4. Dual-Store Cloud Persistence
-* Automated persistence saves the full structured analysis JSON to **Amazon S3** (`s3://<BUCKET>/results/YYYY/MM/DD/<DOC_ID>/<FILE>.json`).
-* Concurrently indexes document metadata, processing metrics, timestamps, and user IDs into **Amazon DynamoDB** for sub-second audit queries.
+* **Stateful Multi-Turn Conversation Memory**: Integrated directly with the **Amazon Bedrock Converse API**. Session chat history is dynamically aggregated across multi-turn exchanges, maintaining document context and past answers so users can ask contextual follow-up questions (*"What was the termination liability mentioned in clause 4 above?"*).
+* **Tiered Inference Routing**: Employs **Amazon Nova Lite** ($0.06 / 1k tokens) for first-pass triage and PII discovery, routing intensive reasoning exclusively to **Amazon Nova Pro** ($0.80 / 1k tokens)—achieving an aggregate **42% reduction in inference expenditure**.
+* **Semantic Chunking & Map-Reduce Synthesis**: Splits massive legal documents (up to 25MB / 100K+ tokens) along natural grammatical and legal boundaries (articles, sections, clauses). Features a **Rolling Context Window** that carries forward cross-chunk context to eliminate boundary hallucinations.
+* **Dual-Store Cloud Persistence**: Automated persistence saves the full structured analysis JSON to **Amazon S3** (`s3://<BUCKET>/results/YYYY/MM/DD/<DOC_ID>/<FILE>.json`) and concurrently indexes document metadata and metrics into **Amazon DynamoDB** for sub-second audit queries.
 
 ---
 
@@ -155,16 +97,13 @@ The architecture leverages a **tiered specialist model** to maximize reasoning d
 
 ## 🛠️ Tech Stack
 
-```
-Frontend & UI        : Streamlit, Custom Responsive CSS
-AI & Orchestration   : Amazon Bedrock, Bedrock Converse API, AgentCore Runtime
-Foundation Models    : Amazon Nova Lite (amazon.nova-lite-v1:0), Amazon Nova Pro (amazon.nova-pro-v1:0)
-Language & Tools     : Python 3.10+, Boto3, PyPDF2, python-docx, Pydantic, python-dotenv
-Cloud Infrastructure : AWS ECS Fargate, Application Load Balancer (ALB), AWS WAF, AWS Cognito
-Storage & Database   : Amazon S3, Amazon DynamoDB
-Workflow Automation  : AWS Step Functions, AWS Lambda, Amazon EventBridge
-Testing & DevOps     : Pytest (189 tests), Docker (non-root), AWS CloudFormation
-```
+* **Frontend & UI**: Streamlit, Custom Responsive CSS
+* **AI & Orchestration**: Amazon Bedrock, Bedrock Converse API, AgentCore Runtime
+* **Foundation Models**: Amazon Nova Lite (`amazon.nova-lite-v1:0`), Amazon Nova Pro (`amazon.nova-pro-v1:0`)
+* **Cloud Infrastructure**: AWS ECS Fargate, Application Load Balancer (ALB), AWS WAF, Amazon Cognito
+* **Storage & Database**: Amazon S3, Amazon DynamoDB
+* **Workflow Automation**: AWS Step Functions, AWS Lambda, Amazon EventBridge
+* **Testing & DevOps**: Pytest (189 tests), Docker (non-root), AWS CloudFormation
 
 ---
 
@@ -212,25 +151,26 @@ Testing & DevOps     : Pytest (189 tests), Docker (non-root), AWS CloudFormation
 * **AWS CLI** configured (`aws configure`) with valid credentials
 * Bedrock model access enabled for **Amazon Nova Lite** and **Amazon Nova Pro**
 
-### Local Installation
+### Local Setup & Execution
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/VinayShinde-Cloud/Legal-Document-Annalyser.git
 cd Legal-Document-Annalyser
 
-# 2. Create and activate a virtual environment
+# 2. Set up virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
 pip install pytest python-dotenv
+
+# 4. Launch the application
+streamlit run Analyze-LegalDocumentsUI.py
 ```
 
-### Environment Configuration
-
-Create a `.env` file in the root directory:
+### Environment Configuration (`.env`)
 
 ```ini
 AWS_REGION=us-east-1
@@ -252,13 +192,6 @@ CHUNK_CONTEXT_WINDOW=1500
 CHUNK_OVERLAP=200
 ```
 
-### Running the Streamlit UI
-
-```bash
-streamlit run Analyze-LegalDocumentsUI.py
-```
-Open **`http://localhost:8501`** in your browser to launch the interface.
-
 ---
 
 ## 📦 Batch Processing Pipeline
@@ -278,8 +211,6 @@ aws dynamodb scan --table-name <RESULTS_TABLE> \
   --expression-attribute-names '{"#s":"status"}' \
   --expression-attribute-values '{":status":{"S":"COMPLETED"}}'
 ```
-
-* **Workflow Execution:** S3 Drop Zone ➔ EventBridge Rule ➔ Step Functions State Machine ➔ Lambda Text Extraction ➔ Bedrock Multi-Agent Processing ➔ S3/DynamoDB Persistence.
 
 ---
 
@@ -307,7 +238,7 @@ tests/test_synthesis_engine.py ....................                      [100%]
 
 ---
 
-## ☁️ Production AWS Cloud Deployment
+## ☁️ Production Deployment
 
 Deploy the entire enterprise infrastructure to AWS ECS Fargate using the automated deployment script:
 
@@ -316,20 +247,13 @@ chmod +x deploy-full.sh
 ./deploy-full.sh --region us-east-1 --env prod
 ```
 
-The script automatically provisions:
-1. **Network**: Dedicated VPC, public/private subnets, NAT gateways, route tables.
-2. **Security**: AWS WAF WebACL with rate limiting and AWS Managed Rule sets.
-3. **Identity**: Amazon Cognito User Pool with Secure Remote Password (SRP) authentication.
-4. **Compute**: ECS Fargate task running containerized Streamlit with non-root privileges.
-5. **Storage**: S3 buckets with SSE-S3 encryption and DynamoDB Pay-Per-Request table.
-
 ---
 
 ## 📄 License & Attribution
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
-### Author
+### Author & Maintainer
 **Vinay Shinde**  
 *Generative AI Engineer*  
 - **GitHub:** [@VinayShinde-Cloud](https://github.com/VinayShinde-Cloud)
