@@ -22,10 +22,11 @@ logger = logging.getLogger("bedrock_agents")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
-# Default models in us-east-1
-DEFAULT_CLASSIFICATION_MODEL = os.environ.get("CLASSIFICATION_MODEL", "amazon.nova-lite-v1:0")
-DEFAULT_SPECIALIST_MODEL = os.environ.get("SPECIALIST_MODEL", "amazon.nova-pro-v1:0")
-DEFAULT_SUPERVISOR_MODEL = os.environ.get("SUPERVISOR_MODEL", "amazon.nova-pro-v1:0")
+# All agents use Nova Lite for cost efficiency
+MODEL = "amazon.nova-lite-v1:0"
+DEFAULT_CLASSIFICATION_MODEL = os.environ.get("CLASSIFICATION_MODEL", MODEL)
+DEFAULT_SPECIALIST_MODEL     = os.environ.get("SPECIALIST_MODEL",     MODEL)
+DEFAULT_SUPERVISOR_MODEL     = os.environ.get("SUPERVISOR_MODEL",     MODEL)
 
 # ==============================================================================
 # SPECIALIZED AGENT SYSTEM PROMPTS
@@ -188,7 +189,12 @@ Never hallucinate terms not present in the document.
 # ==============================================================================
 
 class BedrockConverseAgentEngine:
-    """Multi-agent engine utilizing Amazon Bedrock Runtime Converse API."""
+    """Multi-agent engine utilizing Amazon Bedrock AgentCore Runtime + Converse API.
+    
+    When AgentCore endpoint URLs are set via environment variables, agent calls
+    are routed through AgentCore Runtime. Otherwise, falls back to direct
+    Bedrock Converse API calls.
+    """
 
     def __init__(
         self,
@@ -203,6 +209,43 @@ class BedrockConverseAgentEngine:
         self.supervisor_model = supervisor_model
 
         self._client = boto3.client("bedrock-runtime", region_name=self.region)
+
+        # AgentCore Runtime client (if available)
+        try:
+            self._agentcore_client = boto3.client("bedrock-agentcore", region_name=self.region)
+        except Exception:
+            self._agentcore_client = None
+
+        self._account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+        if not self._account_id:
+            try:
+                self._account_id = boto3.client("sts", region_name=self.region).get_caller_identity().get("Account", "")
+            except Exception:
+                pass
+
+        def _to_arn(val: str) -> str:
+            if not val or val in ("None", "null"):
+                return ""
+            if val.startswith("arn:aws:bedrock-agentcore"):
+                return val
+            if "agent" in val or "-" in val:
+                return f"arn:aws:bedrock-agentcore:{self.region}:{self._account_id}:runtime/{val}"
+            return ""
+
+        self._agentcore_arns = {
+            "classification": _to_arn(os.environ.get("AGENTCORE_CLASSIFICATION_ARN") or os.environ.get("CLASSIFICATION_AGENT_ID", "")),
+            "contract": _to_arn(os.environ.get("AGENTCORE_CONTRACT_ARN") or os.environ.get("CONTRACT_AGENT_ID", "")),
+            "email": _to_arn(os.environ.get("AGENTCORE_EMAIL_ARN") or os.environ.get("EMAIL_AGENT_ID", "")),
+            "legal": _to_arn(os.environ.get("AGENTCORE_LEGAL_ARN") or os.environ.get("LEGAL_AGENT_ID", "")),
+            "supervisor": _to_arn(os.environ.get("AGENTCORE_SUPERVISOR_ARN") or os.environ.get("BEDROCK_AGENT_ID") or os.environ.get("SUPERVISOR_AGENT_ID", "")),
+        }
+
+        self._use_agentcore = any(v for v in self._agentcore_arns.values()) and self._agentcore_client is not None
+        if self._use_agentcore:
+            logger.info("AgentCore Runtime mode enabled — routing via Bedrock AgentCore runtimes")
+        else:
+            logger.info("Direct Converse API mode — no AgentCore runtimes configured")
+
 
     def converse(
         self,
@@ -247,11 +290,11 @@ class BedrockConverseAgentEngine:
                         sleep_time = (2 ** attempt) * 2 + 1
                         time.sleep(sleep_time)
                         continue
-                elif code == "ValidationException" and "nova-pro" in model_id:
-                    # Fallback to Nova Lite if Nova Pro is constrained
-                    logger.warning(f"Falling back from {model_id} to {self.classification_model}")
+                elif code == "ValidationException":
+                    # Fallback to Nova Lite on any validation error
+                    logger.warning(f"ValidationException for {model_id}, retrying with nova-lite")
                     return self.converse(
-                        model_id=self.classification_model,
+                        model_id="amazon.nova-lite-v1:0",
                         system_prompt=system_prompt,
                         user_message=user_message,
                         max_tokens=max_tokens,
@@ -261,10 +304,54 @@ class BedrockConverseAgentEngine:
 
         raise RuntimeError(f"Max retries exceeded for Bedrock Converse with model {model_id}")
 
+    def invoke_agentcore(self, agent_role: str, input_text: str) -> str:
+        """Invoke an AgentCore Runtime agent.
+        
+        Sends the input text to the specified agent's AgentCore runtime
+        and returns the output text from the agent's response.
+        """
+        arn = self._agentcore_arns.get(agent_role, "")
+        if not arn or not self._agentcore_client:
+            raise ValueError(f"AgentCore ARN not configured for role: {agent_role}")
+
+        logger.info(f"Invoking AgentCore agent: {agent_role} (ARN: {arn})")
+
+        try:
+            response = self._agentcore_client.invoke_agent_runtime(
+                agentRuntimeArn=arn,
+                payload=json.dumps({"inputText": input_text}).encode(),
+                contentType="application/json",
+            )
+            raw = response.get("response").read()
+            data = json.loads(raw)
+            return data.get("output", str(data))
+
+        except Exception as e:
+            logger.warning(f"AgentCore invocation failed for {agent_role}: {e}. Falling back to Converse API.")
+            # Fallback to direct Converse API
+            from bedrock_agents import CLASSIFICATION_SYSTEM_PROMPT, CONTRACT_SYSTEM_PROMPT, EMAIL_SYSTEM_PROMPT, LEGAL_SYSTEM_PROMPT, SUPERVISOR_SYSTEM_PROMPT
+            prompts = {
+                "classification": CLASSIFICATION_SYSTEM_PROMPT,
+                "contract": CONTRACT_SYSTEM_PROMPT,
+                "email": EMAIL_SYSTEM_PROMPT,
+                "legal": LEGAL_SYSTEM_PROMPT,
+                "supervisor": SUPERVISOR_SYSTEM_PROMPT,
+            }
+            return self.converse(
+                model_id=self.classification_model,
+                system_prompt=prompts.get(agent_role, SUPERVISOR_SYSTEM_PROMPT),
+                user_message=input_text,
+            )
+
     def classify_and_detect_pii(self, text: str) -> str:
         """Run the Classification & PII specialist agent."""
         sample = text[:8000]
         prompt = f"Please classify this document and detect sensitive PII:\n\n{sample}"
+
+        # Use AgentCore if available
+        if self._use_agentcore and self._agentcore_arns.get("classification"):
+            return self.invoke_agentcore("classification", prompt)
+
         return self.converse(
             model_id=self.classification_model,
             system_prompt=CLASSIFICATION_SYSTEM_PROMPT,
@@ -277,15 +364,21 @@ class BedrockConverseAgentEngine:
         sample = text[:15000]
 
         if "email" in doc_type_lower:
+            agent_role = "email"
             system_prompt = EMAIL_SYSTEM_PROMPT
             prompt = f"Analyze the following email communication:\n\n{sample}"
         elif "legal" in doc_type_lower:
+            agent_role = "legal"
             system_prompt = LEGAL_SYSTEM_PROMPT
             prompt = f"Analyze the following legal document:\n\n{sample}"
         else:
-            # Default to contract
+            agent_role = "contract"
             system_prompt = CONTRACT_SYSTEM_PROMPT
             prompt = f"Analyze the following contract/agreement:\n\n{sample}"
+
+        # Use AgentCore if available
+        if self._use_agentcore and self._agentcore_arns.get(agent_role):
+            return self.invoke_agentcore(agent_role, prompt)
 
         return self.converse(
             model_id=self.specialist_model,
@@ -295,6 +388,10 @@ class BedrockConverseAgentEngine:
 
     def synthesize(self, prompt: str) -> str:
         """Run the Supervisor agent to synthesize all chunk/specialist analyses."""
+        # Use AgentCore if available
+        if self._use_agentcore and self._agentcore_arns.get("supervisor"):
+            return self.invoke_agentcore("supervisor", prompt)
+
         return self.converse(
             model_id=self.supervisor_model,
             system_prompt=SUPERVISOR_SYSTEM_PROMPT,
@@ -326,17 +423,78 @@ class BedrockConverseAgentEngine:
         return combined
 
     def chat(self, user_question: str, document_context: str = "", chat_history: Optional[List[Dict[str, str]]] = None) -> str:
-        """Chat about the document with full context."""
-        context_prompt = (
-            f"Document Excerpt and Findings:\n{document_context[:12000]}\n\n"
-            f"User Question: {user_question}"
-        ) if document_context else user_question
+        """Chat about the document with full context and conversation memory.
 
-        return self.converse(
-            model_id=self.specialist_model,
-            system_prompt=CHAT_SYSTEM_PROMPT,
-            user_message=context_prompt,
-        )
+        Builds a multi-turn messages array from chat_history so the model
+        retains context across questions within the same session.
+        """
+        # Build multi-turn messages from history
+        messages = []
+
+        # Inject document context as the first user+assistant exchange
+        if document_context:
+            messages.append({
+                "role": "user",
+                "content": [{"text": f"Here is the document content for reference:\n\n{document_context[:12000]}"}],
+            })
+            messages.append({
+                "role": "assistant",
+                "content": [{"text": "I have reviewed the document. Please ask me any questions about it."}],
+            })
+
+        # Append previous conversation turns (memory)
+        if chat_history:
+            for msg in chat_history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if isinstance(content, dict):
+                    content = json.dumps(content, default=str)
+                # Bedrock only accepts "user" and "assistant" roles
+                if role in ("user", "assistant"):
+                    # Ensure alternating roles — skip consecutive same-role messages
+                    if messages and messages[-1]["role"] == role:
+                        # Merge into previous message
+                        messages[-1]["content"][0]["text"] += f"\n\n{str(content)[:2000]}"
+                    else:
+                        messages.append({
+                            "role": role,
+                            "content": [{"text": str(content)[:4000]}],
+                        })
+
+        # Add current user question
+        if messages and messages[-1]["role"] == "user":
+            messages[-1]["content"][0]["text"] += f"\n\n{user_question}"
+        else:
+            messages.append({
+                "role": "user",
+                "content": [{"text": user_question}],
+            })
+
+        system = [{"text": CHAT_SYSTEM_PROMPT}]
+        inference_config = {"maxTokens": 4096, "temperature": 0.1}
+
+        for attempt in range(4):
+            try:
+                response = self._client.converse(
+                    modelId=self.specialist_model,
+                    system=system,
+                    messages=messages,
+                    inferenceConfig=inference_config,
+                )
+                output_message = response.get("output", {}).get("message", {})
+                content_blocks = output_message.get("content", [])
+                text_parts = [block.get("text", "") for block in content_blocks if "text" in block]
+                return "".join(text_parts)
+
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("ThrottlingException", "TooManyRequestsException"):
+                    if attempt < 3:
+                        time.sleep((2 ** attempt) * 2 + 1)
+                        continue
+                raise
+
+        raise RuntimeError("Max retries exceeded for chat")
 
 
 # Singleton instance helper

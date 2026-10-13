@@ -4,37 +4,47 @@ Description: Legal Document Batch Processing Pipeline — S3 drop zone with Step
 Parameters:
   EnvironmentName:
     Type: String
-    Default: LegalDocSetup
+    Default: legaldocsetup
     Description: Environment name (must match the agent stack)
   AgentId:
     Type: String
+    Default: ""
     Description: Bedrock Collaborator Agent ID from the agent stack
   AgentAliasId:
     Type: String
+    Default: ""
     Description: Bedrock Collaborator Agent Alias ID from the agent stack
   ClassificationAgentId:
     Type: String
+    Default: ""
     Description: Classification Agent ID from the agent stack
   ClassificationAliasId:
     Type: String
+    Default: ""
     Description: Classification Agent Alias ID from the agent stack
   ContractAgentId:
     Type: String
+    Default: ""
     Description: Contract Agent ID from the agent stack
   ContractAliasId:
     Type: String
+    Default: ""
     Description: Contract Agent Alias ID from the agent stack
   EmailAgentId:
     Type: String
+    Default: ""
     Description: Email Agent ID from the agent stack
   EmailAliasId:
     Type: String
+    Default: ""
     Description: Email Agent Alias ID from the agent stack
   LegalAgentId:
     Type: String
+    Default: ""
     Description: Legal Agent ID from the agent stack
   LegalAliasId:
     Type: String
+    Default: ""
     Description: Legal Agent Alias ID from the agent stack
   MaxConcurrency:
     Type: Number
@@ -212,7 +222,7 @@ Resources:
       Timeout: 120
       MemorySize: 512
       Layers:
-        - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:pypdf2-layer:2"
+        - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:pypdf2-layer:1"
       Environment:
         Variables:
           INPUT_BUCKET: !Ref InputBucket

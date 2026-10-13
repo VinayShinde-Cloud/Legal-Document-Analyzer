@@ -29,7 +29,7 @@ from document_chunking import (
 # Configure page with a custom theme and favicon
 st.set_page_config(
     page_title="CloudAge | Legal Document Analysis",
-    page_icon="📄",
+    page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
@@ -37,139 +37,189 @@ st.set_page_config(
     }
 )
 
-# Custom CSS — Blue theme with CloudAge branding
+# ─────────────────────────────────────────────────────────────
+# Clean & Responsive Styling (Demo-Ready)
+# ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Hide Streamlit deploy button and toolbar */
-    .stDeployButton { display: none !important; }
-    [data-testid="stToolbar"] { display: none !important; }
-    #MainMenu { visibility: hidden; }
-
-    .main-header {
-        font-size: 2.2rem;
-        color: #0D47A1;
-        margin-bottom: 0.5rem;
-        font-weight: 700;
-    }
-    .sub-header {
-        font-size: 1.4rem;
-        color: #1A237E;
-        margin-top: 1.5rem;
-        font-weight: 600;
-    }
-    .file-info {
-        background-color: #F5F9FF;
-        padding: 1rem;
-        border-radius: 0.75rem;
-        margin-bottom: 1rem;
-        border: 1px solid #BBDEFB;
-    }
-    .user-message {
-        background-color: #E3F2FD;
-        padding: 1rem;
-        border-radius: 0.75rem;
-        margin-bottom: 0.5rem;
-        border-left: 4px solid #1565C0;
-    }
-    .assistant-message {
-        background-color: #F5F9FF;
-        padding: 1rem;
-        border-radius: 0.75rem;
-        margin-bottom: 0.5rem;
-        border-left: 4px solid #42A5F5;
-    }
-    .footer {
-        margin-top: 3rem;
-        text-align: center;
-        color: #78909C;
-        font-size: 0.85rem;
-    }
-    .stButton>button {
-        background-color: #1565C0 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 0.5rem !important;
-        padding: 0.5rem 1.5rem !important;
-        font-weight: 500 !important;
-        transition: all 0.2s ease !important;
-    }
-    .stButton>button:hover {
-        background-color: #0D47A1 !important;
-        box-shadow: 0 2px 8px rgba(21, 101, 192, 0.3) !important;
-    }
-    .config-section {
-        background-color: #F5F9FF;
-        padding: 1rem;
-        border-radius: 0.75rem;
+    /* Clean Hero Header */
+    .hero-container {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1.5rem 1.75rem;
         margin-bottom: 1.5rem;
-        border-left: 4px solid #1565C0;
+        color: #ffffff;
     }
-    .chat-container {
-        margin-bottom: 5rem;
+    .hero-title {
+        font-size: 1.85rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin: 0 0 0.35rem 0;
     }
-    .chunking-info {
-        background-color: #E8F5E9;
+    .hero-subtitle {
+        font-size: 0.95rem;
+        color: #94a3b8;
+        margin: 0;
+    }
+    .hero-badge {
+        display: inline-block;
+        background: #1e3a5f;
+        border: 1px solid #3b82f6;
+        color: #60a5fa;
+        border-radius: 6px;
+        padding: 2px 10px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-top: 0.75rem;
+    }
+
+    /* Cards & Steps */
+    .upload-zone {
+        background: #f8fafc;
+        border: 2px dashed #cbd5e1;
+        border-radius: 12px;
+        padding: 1.5rem 1.25rem;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .upload-icon { font-size: 2.2rem; margin-bottom: 0.5rem; display: block; }
+    .upload-title { font-size: 1.05rem; font-weight: 600; color: #1e293b; margin-bottom: 0.25rem; }
+    .upload-desc { font-size: 0.85rem; color: #64748b; }
+
+    .steps-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    .step-item {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
         padding: 0.75rem 1rem;
-        border-radius: 0.5rem;
-        font-size: 0.85rem;
-        margin-top: 0.5rem;
-        border-left: 4px solid #2E7D32;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
     }
-    .file-size-error {
-        background-color: #FFEBEE;
-        padding: 0.75rem 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #C62828;
-        margin: 1rem 0;
+    .step-number {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        font-weight: 700;
+        flex-shrink: 0;
     }
-    .coverage-gap-warning {
-        background-color: #FFF3E0;
-        padding: 0.6rem 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #F57C00;
-        margin: 0.5rem 0;
-        font-size: 0.85rem;
+    .step-1 .step-number { background: #dbeafe; color: #1e40af; }
+    .step-2 .step-number { background: #ede9fe; color: #5b21b6; }
+    .step-3 .step-number { background: #dcfce7; color: #166534; }
+    .step-title { font-size: 0.88rem; font-weight: 600; color: #1e293b; }
+    .step-desc { font-size: 0.78rem; color: #64748b; }
+
+    .file-info-card {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
     }
-    .processing-stats {
-        background-color: #E3F2FD;
-        padding: 0.75rem 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1565C0;
-        margin: 0.5rem 0;
-        font-size: 0.85rem;
+
+    /* Chat Messages */
+    .user-msg {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 10px;
+        padding: 0.85rem 1.15rem;
+        margin: 0.4rem 0;
+        color: #1e293b;
+        font-size: 0.95rem;
+        line-height: 1.5;
     }
+    .assistant-msg {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.85rem 1.15rem;
+        margin: 0.4rem 0;
+        color: #1e293b;
+        font-size: 0.95rem;
+        line-height: 1.5;
+    }
+
+    /* Section Headers & Findings */
     .section-header {
         font-size: 1.05rem;
-        font-weight: 600;
-        color: #1A237E;
-        margin-top: 1.2rem;
-        margin-bottom: 0.5rem;
-        border-bottom: 2px solid #BBDEFB;
-        padding-bottom: 0.3rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin-top: 1.25rem;
+        margin-bottom: 0.6rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid #e2e8f0;
     }
     .finding-item {
-        background-color: #FFF8E1;
-        padding: 0.6rem 1rem;
-        border-radius: 0.5rem;
-        margin: 0.3rem 0;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-left: 3px solid #f59e0b;
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
+        margin: 0.4rem 0;
+        font-size: 0.88rem;
+        color: #1e293b;
+    }
+    .coverage-gap-warning {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-left: 3px solid #f97316;
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
+        margin: 0.4rem 0;
+        font-size: 0.88rem;
+        color: #1e293b;
+    }
+    .processing-stats {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        margin: 0.5rem 0;
+        font-size: 0.88rem;
+        color: #166534;
+    }
+    .chunking-info {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #3b82f6;
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
         font-size: 0.85rem;
-        border-left: 3px solid #FFA000;
+        color: #1e293b;
+        margin-top: 0.4rem;
     }
-    .validation-warning {
-        background-color: #FFF3E0;
-        padding: 0.5rem 0.75rem;
-        border-radius: 0.4rem;
-        border-left: 3px solid #F57C00;
-        margin: 0.3rem 0;
-        font-size: 0.82rem;
+    .file-size-error {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-left: 3px solid #ef4444;
+        border-radius: 6px;
+        padding: 0.65rem 0.9rem;
+        margin: 0.5rem 0;
+        color: #991b1b;
     }
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {
-        background-color: #F8FBFF;
+    .config-section {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 0.85rem;
+        margin-bottom: 0.85rem;
     }
-    /* Progress bar blue */
-    .stProgress > div > div > div > div {
-        background-color: #1565C0 !important;
+    .app-footer {
+        margin-top: 3rem;
+        text-align: center;
+        padding: 1.5rem 0;
+        border-top: 1px solid #e2e8f0;
+        font-size: 0.8rem;
+        color: #64748b;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -335,7 +385,14 @@ def invoke_agent(input_text, max_retries=3):
     try:
         engine = bedrock_agents.get_agent_engine(st.session_state.aws_region)
         doc_context = st.session_state.get("document_content", "")
-        return engine.chat(user_question=input_text, document_context=doc_context)
+        # Pass conversation history (memory) excluding current question
+        all_messages = st.session_state.get("messages", [])
+        chat_history = [m for m in all_messages if m.get("content") != input_text]
+        return engine.chat(
+            user_question=input_text,
+            document_context=doc_context,
+            chat_history=chat_history
+        )
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -540,13 +597,13 @@ def render_message_content(content):
         except (json.JSONDecodeError, ValueError):
             escaped = html_lib.escape(content)
             st.markdown(
-                f'<div class="assistant-message">{escaped}</div>',
+                f'<div class="assistant-msg">{escaped}</div>',
                 unsafe_allow_html=True
             )
     else:
         escaped = html_lib.escape(str(content))
         st.markdown(
-            f'<div class="assistant-message">{escaped}</div>',
+            f'<div class="assistant-msg">{escaped}</div>',
             unsafe_allow_html=True
         )
 
@@ -651,20 +708,33 @@ REGION_DISPLAY_MAP = {
     "us-west-2": "Oregon"
 }
 
-# Sidebar for configuration and info
+# ─────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://assets.cloudage.llc/logo.png", width=200)
-    st.caption("Powered by Amazon Bedrock")
+    # Brand Logo Area
+    st.markdown("""
+    <div style="text-align:center; padding: 1rem 0 0.5rem 0;">
+        <div style="font-size: 2rem; margin-bottom: 0.25rem;">⚖️</div>
+        <div style="font-size: 1.1rem; font-weight: 700; 
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;">CloudAge Legal AI</div>
+        <div style="font-size: 0.7rem; color: #64748b; margin-top: 4px; letter-spacing: 1px; text-transform: uppercase;">
+            Powered by Amazon Bedrock
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Show logged-in user and logout
     st.markdown("---")
-    username = authenticator.get_username() if authenticator else "Admin / Local Session"
+    username = authenticator.get_username() if authenticator else "Admin / Local"
     st.markdown(f"👤 **{username}**")
     if authenticator:
         st.button("Logout", on_click=logout, type="secondary")
 
     # Configuration section
-    st.markdown("### Agent Configuration")
+    st.markdown("### ⚙️ Agent Configuration")
 
     config_expanded = not st.session_state.config_saved
     with st.expander("Edit Configuration", expanded=config_expanded):
@@ -714,7 +784,7 @@ with st.sidebar:
 
         # --- Chunk Configuration Section ---
         st.markdown("---")
-        st.markdown("**Chunk Configuration**")
+        st.markdown("**📐 Chunk Configuration**")
 
         # Load env-based defaults for initial slider values
         env_config = load_config_from_env()
@@ -776,10 +846,10 @@ with st.sidebar:
             st.caption("Invalid values will be replaced with defaults when processing.")
 
         # Information about limits
-        st.info("File size limit: 25MB. Documents ≤ 10,000 characters are processed in a single pass; larger documents use chunked analysis.")
+        st.info("📏 File limit: 25MB. Documents ≤ 10K chars → single pass; larger → chunked analysis.")
 
         # Save button
-        if st.button("Save Configuration"):
+        if st.button("💾 Save Configuration"):
             if not agent_id or not agent_alias_id:
                 st.error("Agent ID and Agent Alias ID are required.")
             else:
@@ -802,43 +872,40 @@ with st.sidebar:
 
     # Display current configuration
     if st.session_state.config_saved:
-        st.markdown("#### Current Settings")
+        st.markdown("#### 📊 Current Settings")
         region_display = REGION_DISPLAY_MAP.get(st.session_state.aws_region, st.session_state.aws_region)
         st.markdown(f"**Region:** {region_display}")
-        st.markdown(f"**Agent ID:** {st.session_state.agent_id[:6]}...")
-        st.markdown(f"**Agent Alias ID:** {st.session_state.agent_alias_id[:6]}...")
-        st.markdown(f"**File Size Limit:** 25MB")
-        st.markdown(f"**Max Chunk Size:** {st.session_state.get('chunk_max_size', 8000):,} chars")
+        st.markdown(f"**Agent:** `{st.session_state.agent_id[:12]}...`")
+        st.markdown(f"**Chunk Size:** {st.session_state.get('chunk_max_size', 8000):,} chars")
 
     st.markdown("---")
 
-    st.markdown("### Session Info")
-    st.markdown(f"**Session ID:** {st.session_state.session_id[:8]}...")
+    st.markdown("### 📋 Session Info")
+    st.markdown(f"**ID:** `{st.session_state.session_id[:8]}...`")
 
     if st.session_state.document_uploaded:
         st.markdown(f"**Document:** {st.session_state.document_name}")
         if st.session_state.analysis_time:
-            st.markdown(f"**Analyzed at:** {st.session_state.analysis_time.strftime('%H:%M:%S')}")
+            st.markdown(f"**Analyzed:** {st.session_state.analysis_time.strftime('%H:%M:%S')}")
 
         # Word count of document
         word_count = len(st.session_state.document_content.split())
-        st.markdown(f"**Document size:** {word_count} words")
+        st.markdown(f"**Size:** {word_count:,} words")
 
         # Show processing result info if available
         if st.session_state.processing_result:
             result = st.session_state.processing_result
             if result.get('was_chunked'):
-                st.markdown(f"**Processing:** Chunked analysis")
-                st.markdown(f"**Chunks:** {result.get('successful_chunks', 0)}/{result.get('total_chunks', 0)} successful")
+                st.markdown(f"**Mode:** Chunked ({result.get('successful_chunks', 0)}/{result.get('total_chunks', 0)})")
                 if result.get('failed_chunks', 0) > 0:
                     st.markdown(f"**Failed:** {result['failed_chunks']} chunks")
             else:
-                st.markdown(f"**Processing:** Single-pass analysis")
+                st.markdown(f"**Mode:** Single-pass")
             elapsed_str = DocumentProcessor.format_elapsed_time(result.get('processing_time_seconds', 0))
-            st.markdown(f"**Processing time:** {elapsed_str}")
+            st.markdown(f"**Time:** {elapsed_str}")
 
         # Add export conversation option
-        if st.button("Export Conversation"):
+        if st.button("📥 Export Conversation"):
             conversation = ""
             for msg in st.session_state.messages:
                 content = msg['content']
@@ -853,9 +920,20 @@ with st.sidebar:
                 mime="text/plain"
             )
 
-# Main content area
-st.markdown('<h1 class="main-header">📄 Legal Document Analysis</h1>', unsafe_allow_html=True)
-st.markdown('<p style="color: #546E7A; margin-top: -0.5rem; margin-bottom: 1.5rem;">Upload documents for AI-powered classification, PII detection, and comprehensive analysis.</p>', unsafe_allow_html=True)
+# ─────────────────────────────────────────────────────────────
+# MAIN CONTENT AREA
+# ─────────────────────────────────────────────────────────────
+
+# Hero Header
+st.markdown("""
+<div class="hero-container">
+    <div class="hero-title">⚖️ Legal Document Analysis</div>
+    <div class="hero-subtitle">
+        AI-powered document classification, PII detection, risk assessment & compliance analysis
+    </div>
+    <div class="hero-badge">Amazon Bedrock • Nova Lite • Multi-Agent</div>
+</div>
+""", unsafe_allow_html=True)
 
 # Check if configuration is saved before allowing document upload
 if not st.session_state.config_saved:
@@ -863,26 +941,48 @@ if not st.session_state.config_saved:
 else:
     # Create two columns for upload section
     if not st.session_state.document_uploaded:
-        col1, col2 = st.columns([2, 1])
-
-        st.warning(f"⚠️ **IMPORTANT:** While the uploader shows 200MB limit, files over {MAX_FILE_SIZE_MB}MB will be rejected by the application.")
+        col1, col2 = st.columns([3, 2])
 
         with col1:
-            st.markdown("### Upload a document to analyze")
+            st.markdown("""
+            <div class="upload-zone">
+                <span class="upload-icon">📤</span>
+                <div class="upload-title">Upload a Legal Document</div>
+                <div class="upload-desc">Drag & drop or browse — PDF, DOCX, TXT up to 25MB</div>
+            </div>
+            """, unsafe_allow_html=True)
+
             uploaded_file = st.file_uploader("Choose a document file",
                                             type=["txt", "pdf", "docx"],
-                                            help=f"Supported formats: TXT, PDF, DOCX. Maximum file size: {MAX_FILE_SIZE_MB}MB")
-
-            st.caption(f"📌 Note: Files larger than {MAX_FILE_SIZE_MB}MB will be rejected")
+                                            help=f"Supported formats: TXT, PDF, DOCX. Maximum file size: {MAX_FILE_SIZE_MB}MB",
+                                            label_visibility="collapsed")
 
         with col2:
-            st.markdown("### How it works")
             st.markdown("""
-1. **Upload** a document (PDF, DOCX, TXT)
-2. **AI analyzes** it for classification, PII, risks
-3. **Ask questions** in the chat about findings
-            """)
-            st.info("Large documents are automatically split into semantic chunks for comprehensive analysis.")
+            <div class="steps-container">
+                <div class="step-item step-1">
+                    <div class="step-number">01</div>
+                    <div>
+                        <div class="step-title">Upload Document</div>
+                        <div class="step-desc">PDF, DOCX, or TXT format</div>
+                    </div>
+                </div>
+                <div class="step-item step-2">
+                    <div class="step-number">02</div>
+                    <div>
+                        <div class="step-title">AI Analysis</div>
+                        <div class="step-desc">Classification, PII, risks & compliance</div>
+                    </div>
+                </div>
+                <div class="step-item step-3">
+                    <div class="step-number">03</div>
+                    <div>
+                        <div class="step-title">Chat & Explore</div>
+                        <div class="step-desc">Ask follow-up questions about findings</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # Display file information if uploaded
         if uploaded_file:
@@ -905,15 +1005,23 @@ else:
                 )
             else:
                 # File is within size limit, display file info
-                st.markdown('<div class="file-info">', unsafe_allow_html=True)
-                st.write(f"**Filename:** {uploaded_file.name}")
-                st.write(f"**Size:** {file_size_mb:.2f} MB")
                 file_type = uploaded_file.name.split('.')[-1].upper()
-                st.write(f"**Type:** {file_type}")
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="file-info-card">
+                    <div style="display:flex; align-items:center; gap:1rem;">
+                        <div style="font-size:2.5rem;">📄</div>
+                        <div>
+                            <div style="font-weight:600; font-size:1rem; color:#1e293b;">{html_lib.escape(uploaded_file.name)}</div>
+                            <div style="font-size:0.85rem; color:#64748b; margin-top:4px;">
+                                {file_type} • {file_size_mb:.2f} MB
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
                 # Process the document
-                if st.button("Analyze Document", key="analyze_btn"):
+                if st.button("🚀 Analyze Document", key="analyze_btn"):
                     # Set up progress UI elements
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -1006,7 +1114,8 @@ else:
 
         with tab1:
             st.markdown(
-                f'<h2 class="sub-header">Conversation about: {st.session_state.document_name}</h2>',
+                f'<div class="section-header" style="font-size:1.15rem; margin-top:0.5rem;">'
+                f'💬 Conversation — {html_lib.escape(st.session_state.document_name)}</div>',
                 unsafe_allow_html=True
             )
 
@@ -1043,7 +1152,7 @@ else:
                     if message["role"] == "user":
                         with st.chat_message("user", avatar="👤"):
                             st.markdown(
-                                f'<div class="user-message">{html_lib.escape(str(message["content"]))}</div>',
+                                f'<div class="user-msg">{html_lib.escape(str(message["content"]))}</div>',
                                 unsafe_allow_html=True
                             )
                     else:
@@ -1064,7 +1173,7 @@ else:
                 st.rerun()
 
         with tab2:
-            st.markdown('<h2 class="sub-header">Analysis Dashboard</h2>', unsafe_allow_html=True)
+            st.markdown('<div class="section-header" style="font-size:1.15rem; margin-top:0.5rem;">📊 Analysis Dashboard</div>', unsafe_allow_html=True)
 
             # Get the latest analysis content
             last_analysis = None
@@ -1129,7 +1238,7 @@ else:
                 # --- Processing Stats ---
                 if st.session_state.processing_result:
                     result_info = st.session_state.processing_result
-                    st.markdown("**Processing Statistics**")
+                    st.markdown("**⏱️ Processing Statistics**")
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Total Chunks", result_info.get('total_chunks', 0))
@@ -1149,14 +1258,14 @@ else:
                 st.markdown("---")
 
                 # --- Document Classification ---
-                st.markdown("**Document Classification**")
+                st.markdown("**📁 Document Classification**")
                 classification = report_data.get('document_classification', 'Unknown')
                 st.info(f"📁 **Type:** {classification}")
 
                 # --- Recommended Actions Timeline ---
                 actions = report_data.get('recommended_actions', [])
                 if actions:
-                    st.markdown("**Recommended Actions**")
+                    st.markdown("**✅ Recommended Actions**")
                     for i, action in enumerate(actions, 1):
                         st.checkbox(action, key=f"action_{i}", value=False)
 
@@ -1164,7 +1273,7 @@ else:
                 # Simple analysis (pass-through) — show basic stats
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("📄 Document Type", "Single-Pass Analysis")
+                    st.metric("📄 Document Type", "Single-Pass")
                 with col2:
                     word_count = len(st.session_state.document_content.split())
                     st.metric("📝 Word Count", f"{word_count:,}")
@@ -1179,7 +1288,7 @@ else:
                 st.info("Upload and analyze a document to see dashboard analytics.")
 
         with tab3:
-            st.markdown('<h2 class="sub-header">Document Content</h2>', unsafe_allow_html=True)
+            st.markdown('<div class="section-header" style="font-size:1.15rem; margin-top:0.5rem;">📄 Document Content</div>', unsafe_allow_html=True)
 
             # Display document content
             file_extension = st.session_state.document_name.split('.')[-1].lower()
@@ -1195,13 +1304,20 @@ else:
     if st.session_state.document_uploaded:
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button("Start Over"):
+            if st.button("🔄 Start Over"):
                 reset_session()
                 st.rerun()
         with col2:
-            if st.button("Edit Agent Configuration"):
+            if st.button("⚙️ Edit Configuration"):
                 st.session_state.config_saved = False
                 st.rerun()
 
 # Footer
-st.markdown('<div class="footer">Built by CloudAge Global — Powered by Amazon Bedrock</div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="app-footer">
+    <div class="footer-text">
+        Built by <span class="footer-brand">CloudAge Global</span> — 
+        Powered by <span class="footer-brand">Amazon Bedrock</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)

@@ -31,6 +31,9 @@
 
 set -euo pipefail
 
+# Ensure all required tools are in PATH
+export PATH="$HOME/.local/bin:/Applications/Docker.app/Contents/Resources/bin:$HOME/Library/Python/3.9/bin:/usr/local/bin:$PATH"
+
 # --- Color output ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,15 +41,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info()  { echo -e "${BLUE}ℹ️  $1${NC}"; }
-log_ok()    { echo -e "${GREEN}✅ $1${NC}"; }
-log_warn()  { echo -e "${YELLOW}⚠️  $1${NC}"; }
-log_error() { echo -e "${RED}❌ $1${NC}"; }
-log_step()  { echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${GREEN}  $1${NC}"; echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"; }
+log_info()  { echo -e "${BLUE}ℹ️  $1${NC}" >&2; }
+log_ok()    { echo -e "${GREEN}✅ $1${NC}" >&2; }
+log_warn()  { echo -e "${YELLOW}⚠️  $1${NC}" >&2; }
+log_error() { echo -e "${RED}❌ $1${NC}" >&2; }
+log_step()  { echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2; echo -e "${GREEN}  $1${NC}" >&2; echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n" >&2; }
 
 # --- Default Configuration ---
 ENVIRONMENT_NAME="LegalDocSetup"
-FOUNDATION_MODEL="amazon.nova-pro-v1:0"
+FOUNDATION_MODEL="amazon.nova-lite-v1:0"
 STACK_AGENTS="legal-doc-agents"
 STACK_INFRA="legal-doc-infra"
 STACK_BATCH="legal-doc-batch"
@@ -171,9 +174,9 @@ if ! command -v git &>/dev/null; then
 fi
 
 # git-remote-codecommit
-if ! pip show git-remote-codecommit &>/dev/null 2>&1; then
+if ! python3 -m pip show git-remote-codecommit &>/dev/null 2>&1; then
   log_info "Installing git-remote-codecommit..."
-  pip install git-remote-codecommit --quiet
+  python3 -m pip install git-remote-codecommit --quiet 2>&1 | grep -v WARNING || true
 fi
 
 # AWS context
@@ -210,11 +213,27 @@ if [ "$VPC_ID" == "None" ] || [ -z "$VPC_ID" ]; then
   fi
 fi
 
-# Get two subnets in different AZs
-SUBNET1=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
-  --query 'Subnets[0].SubnetId' --output text --region "$AWS_REGION")
-SUBNET2=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
-  --query 'Subnets[1].SubnetId' --output text --region "$AWS_REGION")
+# Get two public subnets with route to an Internet Gateway
+IGW_RTBS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'RouteTables[?Routes[?starts_with(GatewayId, `igw-`)]].RouteTableId' \
+  --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+
+PUBLIC_SUBNETS=""
+if [ -n "$IGW_RTBS" ]; then
+  PUBLIC_SUBNETS=$(aws ec2 describe-route-tables --route-table-ids $IGW_RTBS \
+    --query 'RouteTables[*].Associations[?!Main].SubnetId' \
+    --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+fi
+
+if [ -n "$PUBLIC_SUBNETS" ] && [ "$PUBLIC_SUBNETS" != "None" ]; then
+  SUBNET1=$(echo "$PUBLIC_SUBNETS" | awk '{print $1}')
+  SUBNET2=$(echo "$PUBLIC_SUBNETS" | awk '{print $2}')
+else
+  SUBNET1=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+    --query 'Subnets[0].SubnetId' --output text --region "$AWS_REGION")
+  SUBNET2=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+    --query 'Subnets[1].SubnetId' --output text --region "$AWS_REGION")
+fi
 
 if [ -z "$SUBNET1" ] || [ -z "$SUBNET2" ] || [ "$SUBNET1" == "None" ] || [ "$SUBNET2" == "None" ]; then
   log_error "Need at least 2 subnets in VPC $VPC_ID."
@@ -225,60 +244,210 @@ log_ok "VPC: $VPC_ID"
 log_ok "Subnets: $SUBNET1, $SUBNET2"
 
 # ============================================================
-# STEP 1: DEPLOY BEDROCK AGENTS
+# STEP 1: DEPLOY BEDROCK AGENTCORE AGENTS
 # ============================================================
-log_step "Step 1: Deploying Bedrock Agents"
+log_step "Step 1: Deploying Bedrock AgentCore Agents"
 
-delete_stack_if_failed "$STACK_AGENTS"
-AGENTS_STATUS=$(get_stack_status "$STACK_AGENTS")
-
-if [ "$AGENTS_STATUS" == "CREATE_COMPLETE" ] || [ "$AGENTS_STATUS" == "UPDATE_COMPLETE" ]; then
-  log_ok "Agents stack already deployed. Skipping."
-elif [ "$AGENTS_STATUS" == "DOES_NOT_EXIST" ]; then
-  aws cloudformation create-stack \
-    --stack-name "$STACK_AGENTS" \
-    --template-body file://LEGAL-Documents-Collab-Amazon-Model.yaml \
-    --parameters \
-      ParameterKey=EnvironmentName,ParameterValue="$ENVIRONMENT_NAME" \
-      ParameterKey=FoundationModelId,ParameterValue="$FOUNDATION_MODEL" \
-    --capabilities CAPABILITY_IAM \
-    --region "$AWS_REGION" >/dev/null
-  wait_for_stack "$STACK_AGENTS" "create"
-  log_ok "Agents stack deployed!"
+# Create S3 bucket for AgentCore code artifacts
+AGENTCORE_BUCKET="${ENVIRONMENT_NAME_LOWER}-agentcore-${ACCOUNT_ID}-${AWS_REGION}"
+if ! aws s3api head-bucket --bucket "$AGENTCORE_BUCKET" --region "$AWS_REGION" 2>/dev/null; then
+  aws s3api create-bucket --bucket "$AGENTCORE_BUCKET" --region "$AWS_REGION" >/dev/null
+  log_ok "Created S3 bucket: $AGENTCORE_BUCKET"
 else
-  log_error "Agents stack in unexpected state: $AGENTS_STATUS. Delete it manually and retry."
-  exit 1
+  log_ok "S3 bucket exists: $AGENTCORE_BUCKET"
 fi
 
-# Get Agent outputs
-AGENT_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentId`].OutputValue' --output text --region "$AWS_REGION")
-ALIAS_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`CollabBedrockAgentAliasId`].OutputValue' --output text --region "$AWS_REGION")
+# Package and upload agent code to S3 with bundled dependencies
+log_info "Packaging AgentCore agent code and dependencies..."
+if [ ! -d "/tmp/agent_deps/boto3" ]; then
+  log_info "Installing boto3 for AgentCore packaging..."
+  pip3 install --target /tmp/agent_deps boto3 >/dev/null 2>&1
+fi
 
-# Get individual agent IDs for batch pipeline and direct calls
-CLASSIFICATION_AGENT_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ClassificationAgentId`].OutputValue' --output text --region "$AWS_REGION")
-CLASSIFICATION_ALIAS_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ClassificationAgentAliasId`].OutputValue' --output text --region "$AWS_REGION")
-CONTRACT_AGENT_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ContractAgentId`].OutputValue' --output text --region "$AWS_REGION")
-CONTRACT_ALIAS_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ContractAgentAliasId`].OutputValue' --output text --region "$AWS_REGION")
-EMAIL_AGENT_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`EmailAgentId`].OutputValue' --output text --region "$AWS_REGION")
-EMAIL_ALIAS_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`EmailAgentAliasId`].OutputValue' --output text --region "$AWS_REGION")
-LEGAL_AGENT_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`LegalAgentId`].OutputValue' --output text --region "$AWS_REGION")
-LEGAL_ALIAS_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_AGENTS" \
-  --query 'Stacks[0].Outputs[?OutputKey==`LegalAgentAliasId`].OutputValue' --output text --region "$AWS_REGION")
+AGENTCORE_PKG="/tmp/agentcore-pkg"
+rm -rf "$AGENTCORE_PKG"
+mkdir -p "$AGENTCORE_PKG"
+cp -r /tmp/agent_deps/* "$AGENTCORE_PKG/"
+cp agentcore/agent_handler.py "$AGENTCORE_PKG/"
+AGENTCORE_ZIP="/tmp/agentcore-agent.zip"
+(cd "$AGENTCORE_PKG" && zip -q -r "$AGENTCORE_ZIP" .)
+aws s3 cp "$AGENTCORE_ZIP" "s3://${AGENTCORE_BUCKET}/agents/agentcore-agent.zip" --region "$AWS_REGION" >/dev/null
+rm -f "$AGENTCORE_ZIP"
+rm -rf "$AGENTCORE_PKG"
+log_ok "Agent code package uploaded to s3://${AGENTCORE_BUCKET}/agents/agentcore-agent.zip"
 
-log_ok "Agent ID: $AGENT_ID | Alias: $ALIAS_ID"
-log_ok "Classification: $CLASSIFICATION_AGENT_ID | Contract: $CONTRACT_AGENT_ID | Email: $EMAIL_AGENT_ID | Legal: $LEGAL_AGENT_ID"
+# Create IAM role for AgentCore agents (if not exists)
+AGENTCORE_ROLE_NAME="${ENVIRONMENT_NAME}-AgentCoreRole"
+AGENTCORE_ROLE_ARN=""
 
-# Agent roles already have correctly-scoped permissions from CloudFormation
-log_ok "Agent roles configured via CloudFormation IAM policies"
+if aws iam get-role --role-name "$AGENTCORE_ROLE_NAME" &>/dev/null; then
+  AGENTCORE_ROLE_ARN=$(aws iam get-role --role-name "$AGENTCORE_ROLE_NAME" --query 'Role.Arn' --output text)
+  log_ok "IAM role exists: $AGENTCORE_ROLE_ARN"
+else
+  log_info "Creating AgentCore IAM role..."
+  AGENTCORE_ROLE_ARN=$(aws iam create-role --role-name "$AGENTCORE_ROLE_NAME" \
+    --assume-role-policy-document '{
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "bedrock-agentcore.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+      }]
+    }' --query 'Role.Arn' --output text --region "$AWS_REGION")
+
+  # Attach Bedrock + S3 + Logs permissions
+  cat > /tmp/agentcore-policy.json << POLICYEOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:Converse",
+        "bedrock:ConverseStream"
+      ],
+      "Resource": "arn:aws:bedrock:${AWS_REGION}::foundation-model/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::${AGENTCORE_BUCKET}",
+        "arn:aws:s3:::${AGENTCORE_BUCKET}/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:${AWS_REGION}:${ACCOUNT_ID}:log-group:*"
+    }
+  ]
+}
+POLICYEOF
+  aws iam put-role-policy --role-name "$AGENTCORE_ROLE_NAME" \
+    --policy-name "BedrockAccess" \
+    --policy-document file:///tmp/agentcore-policy.json >/dev/null
+  rm -f /tmp/agentcore-policy.json
+
+  log_ok "IAM role created: $AGENTCORE_ROLE_ARN"
+  log_info "Waiting 15s for IAM role propagation..."
+  sleep 15
+fi
+
+# --- Helper: create or get AgentCore runtime ---
+create_or_get_runtime() {
+  local ROLE="$1"
+  local RUNTIME_NAME="${ENVIRONMENT_NAME_LOWER}_${ROLE}_agent"
+
+  # Check if runtime already exists
+  local EXISTING_ID
+  EXISTING_ID=$(aws bedrock-agentcore-control list-agent-runtimes --region "$AWS_REGION" \
+    --query "agentRuntimes[?agentRuntimeName==\`${RUNTIME_NAME}\`].agentRuntimeId | [0]" \
+    --output text 2>/dev/null || echo "None")
+
+  if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "None" ] && [ "$EXISTING_ID" != "null" ]; then
+    log_ok "Runtime exists: $RUNTIME_NAME ($EXISTING_ID)"
+    echo "$EXISTING_ID"
+    return 0
+  fi
+
+  log_info "Creating AgentCore runtime: $RUNTIME_NAME ..."
+
+  cat > /tmp/agentcore-artifact.json << ARTEOF
+{
+  "codeConfiguration": {
+    "code": {
+      "s3": {
+        "bucket": "${AGENTCORE_BUCKET}",
+        "prefix": "agents/agentcore-agent.zip"
+      }
+    },
+    "runtime": "PYTHON_3_10",
+    "entryPoint": ["agent_handler.py"]
+  }
+}
+ARTEOF
+
+  cat > /tmp/agentcore-envvars.json << ENVEOF
+{
+  "AGENT_ROLE": "${ROLE}",
+  "AWS_REGION": "${AWS_REGION}"
+}
+ENVEOF
+
+  local RUNTIME_ID
+  RUNTIME_ID=$(aws bedrock-agentcore-control create-agent-runtime \
+    --agent-runtime-name "$RUNTIME_NAME" \
+    --agent-runtime-artifact file:///tmp/agentcore-artifact.json \
+    --role-arn "$AGENTCORE_ROLE_ARN" \
+    --description "Legal Doc Analyzer - ${ROLE} agent (Nova Lite)" \
+    --environment-variables file:///tmp/agentcore-envvars.json \
+    --network-configuration '{"networkMode": "PUBLIC"}' \
+    --protocol-configuration '{"serverProtocol": "HTTP"}' \
+    --region "$AWS_REGION" \
+    --query 'agentRuntimeId' --output text 2>&1)
+
+  rm -f /tmp/agentcore-artifact.json /tmp/agentcore-envvars.json
+
+  if [ -z "$RUNTIME_ID" ] || echo "$RUNTIME_ID" | grep -qi "error"; then
+    log_error "Failed to create runtime $RUNTIME_NAME: $RUNTIME_ID"
+    return 1
+  fi
+
+  log_ok "Created: $RUNTIME_NAME ($RUNTIME_ID)"
+  echo "$RUNTIME_ID"
+}
+
+# --- Helper: wait for runtime READY ---
+wait_runtime_ready() {
+  local RUNTIME_ID="$1"
+  local ROLE="$2"
+  for i in $(seq 1 30); do
+    local STATUS
+    STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
+      --agent-runtime-id "$RUNTIME_ID" --region "$AWS_REGION" \
+      --query 'status' --output text 2>/dev/null || echo "UNKNOWN")
+    if [ "$STATUS" = "READY" ]; then
+      log_ok "Runtime $ROLE: READY"
+      return 0
+    fi
+    sleep 5
+  done
+  log_warn "Runtime $ROLE timed out waiting for READY (last status: $STATUS)"
+}
+
+# --- Create all 5 agent runtimes ---
+CLASSIFICATION_RT_ID=$(create_or_get_runtime "classification")
+CONTRACT_RT_ID=$(create_or_get_runtime "contract")
+EMAIL_RT_ID=$(create_or_get_runtime "email")
+LEGAL_RT_ID=$(create_or_get_runtime "legal")
+SUPERVISOR_RT_ID=$(create_or_get_runtime "supervisor")
+
+# --- Wait for all runtimes to become READY ---
+log_info "Waiting for AgentCore runtimes to become READY..."
+wait_runtime_ready "$CLASSIFICATION_RT_ID" "classification"
+wait_runtime_ready "$CONTRACT_RT_ID" "contract"
+wait_runtime_ready "$EMAIL_RT_ID" "email"
+wait_runtime_ready "$LEGAL_RT_ID" "legal"
+wait_runtime_ready "$SUPERVISOR_RT_ID" "supervisor"
+
+# Export for downstream infrastructure stack
+AGENT_ID="$SUPERVISOR_RT_ID"
+ALIAS_ID="DEFAULT"
+CLASSIFICATION_AGENT_ID="$CLASSIFICATION_RT_ID"
+CLASSIFICATION_ALIAS_ID="DEFAULT"
+CONTRACT_AGENT_ID="$CONTRACT_RT_ID"
+CONTRACT_ALIAS_ID="DEFAULT"
+EMAIL_AGENT_ID="$EMAIL_RT_ID"
+EMAIL_ALIAS_ID="DEFAULT"
+LEGAL_AGENT_ID="$LEGAL_RT_ID"
+LEGAL_ALIAS_ID="DEFAULT"
+
+log_ok "All 5 AgentCore agents deployed successfully!"
+log_ok "Classification: $CLASSIFICATION_RT_ID | Contract: $CONTRACT_RT_ID"
+log_ok "Email: $EMAIL_RT_ID | Legal: $LEGAL_RT_ID | Supervisor: $SUPERVISOR_RT_ID"
 
 # ============================================================
 # STEP 2: DEPLOY INFRASTRUCTURE

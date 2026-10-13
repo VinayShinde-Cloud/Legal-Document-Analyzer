@@ -8,10 +8,12 @@ Parameters:
     Description: Environment name for resource naming
   AgentId:
     Type: String
-    Description: Bedrock Collaborator Agent ID (from agent stack outputs)
+    Default: ""
+    Description: Optional Bedrock Collaborator Agent ID
   AgentAliasId:
     Type: String
-    Description: Bedrock Collaborator Agent Alias ID (from agent stack outputs)
+    Default: ""
+    Description: Optional Bedrock Collaborator Agent Alias ID
   ClassificationAgentId:
     Type: String
     Default: ""
@@ -118,6 +120,7 @@ Resources:
     DeletionPolicy: Delete
     Properties:
       RepositoryName: "legal-doc-analyzer"
+      EmptyOnDelete: true
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -328,7 +331,12 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:Converse
+                  - bedrock:ConverseStream
                   - bedrock:InvokeAgent
+                  - bedrock-agentcore:InvokeAgentRuntime
                 Resource: "*"
         - PolicyName: ResultsPersistenceAccess
           PolicyDocument:
@@ -419,6 +427,12 @@ Resources:
               Value: "8000"
             - Name: CHUNK_MIN_SIZE
               Value: "500"
+            - Name: CLASSIFICATION_MODEL
+              Value: amazon.nova-lite-v1:0
+            - Name: SPECIALIST_MODEL
+              Value: amazon.nova-lite-v1:0
+            - Name: SUPERVISOR_MODEL
+              Value: amazon.nova-lite-v1:0
           LogConfiguration:
             LogDriver: awslogs
             Options:
