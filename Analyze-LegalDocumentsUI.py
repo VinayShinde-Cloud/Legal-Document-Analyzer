@@ -35,12 +35,12 @@ from document_chunking import (
 
 # Configure page with a custom theme and favicon
 st.set_page_config(
-    page_title="CloudAge | Legal Document Analysis",
+    page_title="Legal Document Analysis",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'About': "Legal Document Analysis powered by CloudAge & Amazon Bedrock"
+        'About': "Legal Document Analysis powered by Amazon Bedrock"
     }
 )
 
@@ -745,7 +745,7 @@ with st.sidebar:
         <div style="font-size: 1.1rem; font-weight: 700; 
             background: linear-gradient(135deg, #60a5fa, #a78bfa);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            background-clip: text;">CloudAge Legal AI</div>
+            background-clip: text;">Legal AI Intelligence</div>
         <div style="font-size: 0.7rem; color: #64748b; margin-top: 4px; letter-spacing: 1px; text-transform: uppercase;">
             Powered by Amazon Bedrock
         </div>
@@ -1350,7 +1350,7 @@ else:
 st.markdown("""
 <div class="app-footer">
     <div class="footer-text">
-        Built by <span class="footer-brand">CloudAge Global</span> — 
+        Architected by <span class="footer-brand">Vinay Shinde</span> — 
         Powered by <span class="footer-brand">Amazon Bedrock</span>
     </div>
 </div>

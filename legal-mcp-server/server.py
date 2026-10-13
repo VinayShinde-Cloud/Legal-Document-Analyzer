@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Legal Document Analysis MCP Server.
 
-Exposes the CloudAge legal document analysis agents as an MCP tool.
+Exposes the legal document analysis agents as an MCP tool.
 Uses direct agent calls (Classification → Specialist) for reliability,
 bypassing the supervisor agent which times out in EU cross-region inference.
 """

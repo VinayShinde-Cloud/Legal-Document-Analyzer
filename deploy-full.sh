@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # FULLY AUTOMATED DEPLOYMENT — Zero Manual Intervention
-# CloudAge Legal Document Analyzer
+# Legal Document Analyzer
 #
 # Deploys everything end-to-end:
 #   1. Bedrock Agents (AI agents + guardrails)

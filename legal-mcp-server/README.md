@@ -1,6 +1,6 @@
 # Legal Document Analysis MCP Server
 
-A custom MCP server that exposes the CloudAge legal document analysis agents (Amazon Bedrock) as a tool for AI assistants.
+A custom MCP server that exposes the legal document analysis agents (Amazon Bedrock) as a tool for AI assistants.
 
 ## What it does
 

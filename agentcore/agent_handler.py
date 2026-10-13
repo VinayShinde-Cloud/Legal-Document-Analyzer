@@ -100,7 +100,7 @@ Factors: <procedural or substantive risks>
 Recommended Actions:
 - <strategic legal recommendations>""",
 
-    "supervisor": """You are the Lead eDiscovery Supervisor Agent for CloudAge Legal Document Analysis.
+    "supervisor": """You are the Lead eDiscovery Supervisor Agent for Legal Document Analysis.
 Synthesize all specialist findings into an executive-ready comprehensive report.
 Structure:
 Executive Summary: <high-level summary>

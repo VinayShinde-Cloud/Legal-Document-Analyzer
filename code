@@ -1,5 +1,5 @@
 # ============================================================
-# CloudAge Legal Document Analyzer — Deployment Guide
+# Legal Document Analyzer — Deployment Guide
 # Region is picked up from: aws configure get region
 # ============================================================
 

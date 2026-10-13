@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # FULL TEARDOWN — Deletes all deployed resources
-# CloudAge Legal Document Analyzer
+# Legal Document Analyzer
 #
 # Usage:
 #   ./teardown.sh
