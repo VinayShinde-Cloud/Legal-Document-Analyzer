@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY document_chunking/ ./document_chunking/
 COPY Analyze-LegalDocumentsUI.py .
+COPY bedrock_agents.py .
 
 # Set ownership and switch to non-root user
 RUN chown -R appuser:appuser /app
