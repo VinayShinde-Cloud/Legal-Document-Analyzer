@@ -162,6 +162,38 @@ aws codecommit delete-repository --repository-name legal-doc-analyzer --region "
 # Delete ECS CloudWatch logs
 aws logs delete-log-group --log-group-name /ecs/legal-doc-analyzer --region "$AWS_REGION" >/dev/null 2>&1 || true
 
+# --- Clean Bedrock AgentCore Runtimes & Memories ---
+log_info "Cleaning Bedrock AgentCore runtimes and memories in $AWS_REGION..."
+for rt_id in $(aws bedrock-agentcore-control list-agent-runtimes --region "$AWS_REGION" --query "agentRuntimes[*].agentRuntimeId" --output text 2>/dev/null || true); do
+  if [ -n "$rt_id" ] && [ "$rt_id" != "None" ]; then
+    log_info "Deleting AgentCore runtime: $rt_id..."
+    aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id "$rt_id" --region "$AWS_REGION" >/dev/null 2>&1 || true
+  fi
+done
+
+for mem_id in $(aws bedrock-agentcore-control list-memories --region "$AWS_REGION" --query "memories[*].id" --output text 2>/dev/null || true); do
+  if [ -n "$mem_id" ] && [ "$mem_id" != "None" ]; then
+    log_info "Deleting AgentCore memory: $mem_id..."
+    aws bedrock-agentcore-control delete-memory --memory-id "$mem_id" --region "$AWS_REGION" >/dev/null 2>&1 || true
+  fi
+done
+
+# --- Clean Bedrock Agents & Knowledge Bases ---
+log_info "Cleaning Bedrock agents and knowledge bases in $AWS_REGION..."
+for agent_id in $(aws bedrock-agent list-agents --region "$AWS_REGION" --query "agentSummaries[*].agentId" --output text 2>/dev/null || true); do
+  if [ -n "$agent_id" ] && [ "$agent_id" != "None" ]; then
+    log_info "Deleting Bedrock agent: $agent_id..."
+    aws bedrock-agent delete-agent --agent-id "$agent_id" --skip-resource-in-use-check --region "$AWS_REGION" >/dev/null 2>&1 || true
+  fi
+done
+
+for kb_id in $(aws bedrock-agent list-knowledge-bases --region "$AWS_REGION" --query "knowledgeBaseSummaries[*].knowledgeBaseId" --output text 2>/dev/null || true); do
+  if [ -n "$kb_id" ] && [ "$kb_id" != "None" ]; then
+    log_info "Deleting Bedrock Knowledge Base: $kb_id..."
+    aws bedrock-agent delete-knowledge-base --knowledge-base-id "$kb_id" --region "$AWS_REGION" >/dev/null 2>&1 || true
+  fi
+done
+
 # Clean any lingering input/output/agentcore buckets matching environment
 for ORPHAN_BUCKET in $(aws s3 ls 2>/dev/null | grep -E 'legaldoc.*-(input|output|agentcore)' | awk '{print $3}' || true); do
   if [ -n "$ORPHAN_BUCKET" ]; then
